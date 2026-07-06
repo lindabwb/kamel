@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Controle qualite PCB</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <main class="app">
+    <header class="topbar">
+      <div>
+        <h1>Controle qualite PCB</h1>
+        <p>Déposez les certificats PDF, vérifiez les données, puis exportez le rapport.</p>
+      </div>
+      {% if processed %}
+      <a class="button primary" href="{{ url_for('download', run_id=run_id) }}">Télécharger Excel</a>
+      {% endif %}
+    </header>
+
+    {% if error %}
+    <div class="notice error">{{ error }}</div>
+    {% endif %}
+    {% if message %}
+    <div class="notice">{{ message }}</div>
+    {% endif %}
+
+    <section class="upload-panel">
+      <form action="{{ url_for('process') }}" method="post" enctype="multipart/form-data">
+        <label class="dropzone">
+          <input id="pdfInput" type="file" name="pdfs" accept=".pdf" multiple required>
+          <span class="drop-title">Choisir ou déposer des PDF</span>
+          <span class="drop-copy">Plusieurs fichiers peuvent être traités en une seule fois.</span>
+          <span id="selectedFiles" class="selected-files">Aucun fichier sélectionné</span>
+        </label>
+        <button id="analyzeButton" class="button primary" type="submit" disabled>Analyser</button>
+      </form>
+    </section>
+
+    {% if processed %}
+    <section class="files-panel">
+      <strong>Fichiers analysés</strong>
+      <ul>
+        {% for name in uploaded_names %}
+        <li>{{ name }}</li>
+        {% endfor %}
+      </ul>
+    </section>
+
+    <section class="summary-grid" aria-label="Résumé">
+      <div class="metric"><span>PDF</span><strong>{{ stats.pdf_count }}</strong></div>
+      <div class="metric"><span>Contrôles</span><strong>{{ stats.inspection_count }}</strong></div>
+      <div class="metric ok"><span>Conformes</span><strong>{{ stats.conforme_count }}</strong></div>
+      <button class="metric bad metric-button" type="button" data-filter="bad"><span>Non conformes</span><strong>{{ stats.non_conforme_count }}</strong></button>
+      <button class="metric warn metric-button" type="button" data-filter="verify"><span>À vérifier</span><strong>{{ stats.verify_count }}</strong></button>
+    </section>
+
+    {% if warnings %}
+    <section class="notice warning">
+      <strong>Alertes</strong>
+      <ul>
+        {% for warning in warnings %}
+        <li>{{ warning }}</li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+
+    <section class="results">
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-tab="cover">Page de garde</button>
+        <button class="tab" data-tab="standards">Normes</button>
+        <button class="tab" data-tab="inspection">Inspection</button>
+      </div>
+
+      <div class="table-tools">
+        <input id="tableSearch" type="search" placeholder="Rechercher dans le tableau affiché">
+      </div>
+
+      <div class="tab-panel active" id="cover">
+        {% set columns = cover_columns %}
+        {% set rows = cover_rows %}
+        {% include "table.html" %}
+      </div>
+
+      <div class="tab-panel" id="standards">
+        {% set columns = standard_columns %}
+        {% set rows = standard_rows %}
+        {% include "table.html" %}
+      </div>
+
+      <div class="tab-panel" id="inspection">
+        {% set columns = inspection_columns %}
+        {% set rows = inspection_rows %}
+        {% include "table.html" %}
+      </div>
+    </section>
+    {% endif %}
+  </main>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

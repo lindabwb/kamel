@@ -1,0 +1,25 @@
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        {% for column in columns %}
+        <th>{{ column }}</th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        {% for column in columns %}
+        {% set value = row.get(column, "NA") %}
+        {% if column in ["Conformite", "Comparaison"] %}
+        <td><span class="status status-{{ value|lower|replace(' ', '-') }}">{{ value }}</span></td>
+        {% else %}
+        <td>{{ value }}</td>
+        {% endif %}
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
