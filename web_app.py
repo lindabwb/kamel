@@ -46,7 +46,7 @@ def is_pdf(filename: str) -> bool:
 def report_download_name(uploaded_names: list[str]) -> str:
     if len(uploaded_names) == 1:
         stem = Path(uploaded_names[0]).stem
-        safe_stem = secure_filename(stem) or "document"
+        safe_stem = secure_filename(stem.replace("—", "_").replace("–", "_")) or "document"
         return f"rapport_{safe_stem}.xlsx"
     return f"rapport_{len(uploaded_names)}_fichiers_pcb.xlsx"
 

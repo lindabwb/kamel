@@ -263,7 +263,10 @@ def parse_filename_values_from_name(filename: str) -> dict[str, str]:
     Extra suffixes after the fourth token are ignored, e.g. supplier name.
     """
     stem = Path(filename).stem
-    parts = [p.strip() for p in re.split(r"\s*[-–—]\s*", stem) if p.strip()]
+    if "—" in stem or "–" in stem:
+        parts = [p.strip() for p in re.split(r"\s*[–—]\s*", stem) if p.strip()]
+    else:
+        parts = [p.strip() for p in re.split(r"\s*-\s*", stem) if p.strip()]
     values = {"PART NO": "NA", "P.O.NO": "NA", "QUANTITY": "NA", "DATA CODE": "NA"}
     if len(parts) >= 4:
         values["PART NO"] = parts[0]
