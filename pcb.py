@@ -256,7 +256,7 @@ def to_float(value: str) -> Optional[float]:
 
 
 def extract_numbers(value: str) -> list[float]:
-    return [float(number.replace(",", ".")) for number in re.findall(r"-?\d+(?:[.,]\d+)?", value)]
+    return [float(number.replace(",", ".")) for number in re.findall(r"(?<!\d)-?\d+(?:[.,]\d+)?", value)]
 
 
 def parse_filename_values_from_name(filename: str) -> dict[str, str]:
