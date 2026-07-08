@@ -578,6 +578,15 @@ def evaluate_conformity(spec: str, result: str) -> tuple[str, str]:
             else ("NON CONFORME", f"Mesure(s) hors plage {low:g}-{high:g}: {', '.join(f'{value:g}' for value in failing)}")
         )
 
+    if result_numbers and re.search(r"\d\s*-\s*\d", numeric_spec) and len(spec_numbers) >= 2:
+        low, high = sorted((spec_numbers[0], spec_numbers[1]))
+        failing = [value for value in result_numbers if not low <= value <= high]
+        return (
+            ("CONFORME", f"Toutes les mesures dans la plage {low:g}-{high:g}")
+            if not failing
+            else ("NON CONFORME", f"Mesure(s) hors plage {low:g}-{high:g}: {', '.join(f'{value:g}' for value in failing)}")
+        )
+
     if result_numbers and re.search(r"\+/-|±", numeric_spec) and len(spec_numbers) >= 2:
         target, tolerance = spec_numbers[0], abs(spec_numbers[1])
         low, high = target - tolerance, target + tolerance
