@@ -156,9 +156,16 @@ def pick_cover_value(candidate_words: list[str], field_name: str) -> str:
             if match:
                 return clean_quantity(match.group(0)) if field_name == "QUANTITY" else match.group(0)
     if field_name == "PART NO":
+        value_words: list[str] = []
         for word in cleaned:
-            if re.search(r"[A-Z]", word, flags=re.IGNORECASE) and re.search(r"\d", word):
-                return word
+            normalized = normalize_word(word)
+            if normalized in {"PCB", "PCS"}:
+                continue
+            if re.fullmatch(r"\d{4}/\d{1,2}/\d{1,2}", word):
+                continue
+            value_words.append(word)
+        if value_words:
+            return clean_text(" ".join(value_words))
     return cleaned[0] if cleaned else "NA"
 
 
