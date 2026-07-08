@@ -710,6 +710,22 @@ def compose_test_name(raw_row: list[object], spec_col: int, current_parent: str)
     return current_parent, current_parent
 
 
+def fix_embedded_spec_in_test_name(test_name: str, spec: str) -> tuple[str, str]:
+    match = re.search(r"(?P<prefix>.*?)(?P<embedded>[A-Z]?\d+\s*:\s*\(\s*[^)]*[±+\-/~][^)]*\)\s*[A-ZµΩ\"%]*)", test_name, flags=re.IGNORECASE)
+    if not match:
+        return test_name, spec
+
+    cleaned_test = clean_text(match.group("prefix")).rstrip("-: ")
+    embedded_spec = clean_text(match.group("embedded"))
+    if not cleaned_test:
+        cleaned_test = "NA"
+    return cleaned_test, embedded_spec
+
+
+def test_name_has_embedded_spec(test_name: str) -> bool:
+    return bool(re.search(r"[A-Z]?\d+\s*:\s*\(\s*[^)]*[±+\-/~][^)]*\)", test_name, flags=re.IGNORECASE))
+
+
 def extract_spec_results_from_table(table: list[list[object]]) -> list[tuple[str, str, str]]:
     header = find_header_row(table)
     if header is None:
@@ -742,7 +758,9 @@ def extract_spec_results_from_table(table: list[list[object]]) -> list[tuple[str
             if index < len(raw_row) and clean_text(raw_row[index])
         ]
         results = " | ".join(result_values)
-        if not spec and previous_spec and results:
+        has_embedded_spec = test_name_has_embedded_spec(current_test)
+        current_test, spec = fix_embedded_spec_in_test_name(current_test, spec)
+        if not spec and previous_spec and results and not has_embedded_spec:
             spec = previous_spec
         if spec:
             previous_spec = spec
