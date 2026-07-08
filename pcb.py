@@ -255,6 +255,10 @@ def to_float(value: str) -> Optional[float]:
     return float(match.group(0).replace(",", "."))
 
 
+def extract_numbers(value: str) -> list[float]:
+    return [float(number.replace(",", ".")) for number in re.findall(r"-?\d+(?:[.,]\d+)?", value)]
+
+
 def parse_filename_values_from_name(filename: str) -> dict[str, str]:
     """
     Expected file name pattern:
@@ -541,50 +545,52 @@ def evaluate_conformity(spec: str, result: str) -> tuple[str, str]:
     if any(word in result_upper for word in negative_words):
         return "NON CONFORME", "Le resultat indique un echec"
 
-    positive_words = ["OK", "PASS", "PASSED", "ACCEPT", "ACCEPTED", "CONFORM"]
-    if any(word in result_upper for word in positive_words):
-        return "CONFORME", "Le resultat indique OK/PASS"
-
     if normalize_for_compare(spec_clean, "") == normalize_for_compare(result_clean, ""):
         return "CONFORME", "Resultat identique a la specification"
 
-    result_number = to_float(result_clean)
-    spec_numbers = [float(n.replace(",", ".")) for n in re.findall(r"-?\d+(?:[.,]\d+)?", numeric_spec)]
-    if result_number is None or not spec_numbers:
-        return "A VERIFIER", "Comparaison automatique non fiable pour cette ligne"
+    result_numbers = extract_numbers(result_clean)
+    spec_numbers = extract_numbers(numeric_spec)
 
-    if re.search(r"\bMIN\.?\b|>=|≧|≥", spec_upper):
+    if result_numbers and spec_numbers and re.search(r"\bMIN\.?\b|>=|≧|≥", spec_upper):
         limit = spec_numbers[0]
+        failing = [value for value in result_numbers if value < limit]
         return (
-            ("CONFORME", f"{result_number:g} >= {limit:g}")
-            if result_number >= limit
-            else ("NON CONFORME", f"{result_number:g} < {limit:g}")
+            ("CONFORME", f"Toutes les mesures >= {limit:g}")
+            if not failing
+            else ("NON CONFORME", f"Mesure(s) < {limit:g}: {', '.join(f'{value:g}' for value in failing)}")
         )
 
-    if re.search(r"\bMAX\.?\b|<=|≦|≤", spec_upper):
+    if result_numbers and spec_numbers and re.search(r"\bMAX\.?\b|<=|≦|≤", spec_upper):
         limit = spec_numbers[0]
+        failing = [value for value in result_numbers if value > limit]
         return (
-            ("CONFORME", f"{result_number:g} <= {limit:g}")
-            if result_number <= limit
-            else ("NON CONFORME", f"{result_number:g} > {limit:g}")
+            ("CONFORME", f"Toutes les mesures <= {limit:g}")
+            if not failing
+            else ("NON CONFORME", f"Mesure(s) > {limit:g}: {', '.join(f'{value:g}' for value in failing)}")
         )
 
-    if ("~" in numeric_spec or "～" in numeric_spec) and len(spec_numbers) >= 2:
+    if result_numbers and ("~" in numeric_spec or "～" in numeric_spec) and len(spec_numbers) >= 2:
         low, high = spec_numbers[0], spec_numbers[1]
+        failing = [value for value in result_numbers if not low <= value <= high]
         return (
-            ("CONFORME", f"{low:g} <= {result_number:g} <= {high:g}")
-            if low <= result_number <= high
-            else ("NON CONFORME", f"{result_number:g} hors plage {low:g}-{high:g}")
+            ("CONFORME", f"Toutes les mesures dans la plage {low:g}-{high:g}")
+            if not failing
+            else ("NON CONFORME", f"Mesure(s) hors plage {low:g}-{high:g}: {', '.join(f'{value:g}' for value in failing)}")
         )
 
-    if re.search(r"\+/-|±", numeric_spec) and len(spec_numbers) >= 2:
+    if result_numbers and re.search(r"\+/-|±", numeric_spec) and len(spec_numbers) >= 2:
         target, tolerance = spec_numbers[0], abs(spec_numbers[1])
         low, high = target - tolerance, target + tolerance
+        failing = [value for value in result_numbers if not low <= value <= high]
         return (
-            ("CONFORME", f"{low:g} <= {result_number:g} <= {high:g}")
-            if low <= result_number <= high
-            else ("NON CONFORME", f"{result_number:g} hors tolerance {low:g}-{high:g}")
+            ("CONFORME", f"Toutes les mesures dans la tolerance {low:g}-{high:g}")
+            if not failing
+            else ("NON CONFORME", f"Mesure(s) hors tolerance {low:g}-{high:g}: {', '.join(f'{value:g}' for value in failing)}")
         )
+
+    positive_words = ["OK", "PASS", "PASSED", "ACCEPT", "ACCEPTED", "CONFORM"]
+    if any(word in result_upper for word in positive_words):
+        return "CONFORME", "Le resultat indique OK/PASS"
 
     return "A VERIFIER", "Regle de specification non reconnue automatiquement"
 
@@ -608,12 +614,14 @@ def should_skip_page(text: str) -> bool:
 def normalize_header(value: object) -> str:
     text = clean_text(value).upper()
     text = re.sub(r"[^A-Z0-9]+", "", text)
-    if text in {"SPECIFICATION", "SPECIFICATIONS", "DRWDIMENSION", "DIMENSION"}:
+    if text in {"SPECIFICATION", "SPECIFICATIONS", "DRWDIMENSION", "DIMENSION", "STD", "STANDARD"}:
         return "SPEC"
     if text in {"RESULT", "RESULTS", "MEASUREDRESULTS", "THICKNESS"}:
         return "RESULTS"
     if text in {"REMARK", "REMARKS", "PTHNPTH"}:
         return "REMARKS"
+    if text in {"NO", "NO."}:
+        return "ITEM"
     return text
 
 
@@ -631,6 +639,12 @@ def find_header_row(table: list[list[object]]) -> Optional[tuple[int, Optional[i
                     break
                 if headers[i] in {"", "RESULTS"}:
                     results_indexes.append(i)
+            return row_index, description_index, spec_index, spec_indexes, results_indexes
+
+        remarks_index = next((i for i, h in enumerate(headers) if h == "REMARKS"), None)
+        if spec_index is not None and remarks_index is not None and remarks_index > spec_index:
+            spec_indexes = [spec_index]
+            results_indexes = list(range(spec_index + 1, remarks_index + 1))
             return row_index, description_index, spec_index, spec_indexes, results_indexes
     return None
 
