@@ -10,12 +10,9 @@
   <main class="app">
     <header class="topbar">
       <div>
-        <h1>Controle qualite PCB</h1>
-        <p>Déposez les certificats PDF, vérifiez les données, puis exportez le rapport.</p>
+        <h1>Modification PDF qualité PCB</h1>
+        <p>Déposez les certificats PDF pour générer une copie surlignée de vérification.</p>
       </div>
-      {% if processed %}
-      <a class="button primary" href="{{ url_for('download', run_id=run_id) }}">Télécharger Excel</a>
-      {% endif %}
     </header>
 
     {% if error %}
@@ -61,10 +58,8 @@
 
     <section class="summary-grid" aria-label="Résumé">
       <div class="metric"><span>PDF</span><strong>{{ stats.pdf_count }}</strong></div>
-      <div class="metric"><span>Contrôles</span><strong>{{ stats.inspection_count }}</strong></div>
-      <div class="metric ok"><span>Conformes</span><strong>{{ stats.conforme_count }}</strong></div>
-      <button class="metric bad metric-button" type="button" data-filter="bad"><span>Non conformes</span><strong>{{ stats.non_conforme_count }}</strong></button>
-      <button class="metric warn metric-button" type="button" data-filter="verify"><span>À vérifier</span><strong>{{ stats.verify_count }}</strong></button>
+      <div class="metric"><span>PDF modifiés</span><strong>{{ stats.highlighted_count }}</strong></div>
+      <div class="metric ok"><span>Lignes échantillon</span><strong>{{ stats.sampled_count }}</strong></div>
     </section>
 
     {% if warnings %}
@@ -77,36 +72,6 @@
       </ul>
     </section>
     {% endif %}
-
-    <section class="results">
-      <div class="tabs" role="tablist">
-        <button class="tab active" data-tab="cover">Page de garde</button>
-        <button class="tab" data-tab="standards">Normes</button>
-        <button class="tab" data-tab="inspection">Inspection</button>
-      </div>
-
-      <div class="table-tools">
-        <input id="tableSearch" type="search" placeholder="Rechercher dans le tableau affiché">
-      </div>
-
-      <div class="tab-panel active" id="cover">
-        {% set columns = cover_columns %}
-        {% set rows = cover_rows %}
-        {% include "table.html" %}
-      </div>
-
-      <div class="tab-panel" id="standards">
-        {% set columns = standard_columns %}
-        {% set rows = standard_rows %}
-        {% include "table.html" %}
-      </div>
-
-      <div class="tab-panel" id="inspection">
-        {% set columns = inspection_columns %}
-        {% set rows = inspection_rows %}
-        {% include "table.html" %}
-      </div>
-    </section>
     {% endif %}
   </main>
 

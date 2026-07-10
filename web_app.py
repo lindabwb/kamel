@@ -15,11 +15,7 @@ from flask import Flask, render_template, request, send_file, url_for
 from werkzeug.utils import secure_filename
 
 from pcb import (
-    COVER_COLUMNS,
-    INSPECTION_COLUMNS,
-    STANDARD_COLUMNS,
     extract_pdf_report,
-    write_excel_report,
 )
 
 
@@ -73,9 +69,8 @@ def split_highlight_values(value: str) -> list[str]:
     return cleaned
 
 
-def highlight_band(page, rect, color=(1, 0.86, 0.18)) -> None:
-    band = fitz.Rect(24, max(rect.y0 - 2, 0), page.rect.width - 24, min(rect.y1 + 2, page.rect.height))
-    annot = page.add_highlight_annot(band)
+def add_value_highlight(page, rect, color=(1, 0.86, 0.18)) -> None:
+    annot = page.add_highlight_annot(rect)
     annot.set_colors(stroke=color)
     annot.update()
 
@@ -110,41 +105,29 @@ def find_first_rect(document, term: str, page_number: str | None = None):
     return None, None
 
 
-def highlight_terms_in_pdf(source_pdf: Path, output_pdf: Path, terms: list[str]) -> int:
-    document = fitz.open(source_pdf)
-    highlighted = 0
-    seen_terms: set[str] = set()
+def find_rects_on_page(page, term: str) -> list[fitz.Rect]:
+    for variant in search_variants(term):
+        rects = page.search_for(variant)
+        if rects:
+            return rects
+    return []
 
-    for raw_term in terms:
-        term = " ".join(str(raw_term).split())
-        if not term or term.upper() in {"NA", "OK"} or term in seen_terms:
+
+def clean_row_candidates(row: dict[str, str]) -> list[str]:
+    candidates: list[str] = []
+    for chunk in str(row.get("TestName", "")).split(" - "):
+        candidates.extend(split_highlight_values(chunk))
+    candidates.extend(split_highlight_values(row.get("SPEC", "")))
+    candidates.extend(split_highlight_values(row.get("RESULTS", "")))
+
+    cleaned: list[str] = []
+    for candidate in candidates:
+        candidate = " ".join(candidate.split())
+        if not candidate or candidate.upper() == "NA":
             continue
-        seen_terms.add(term)
-
-        variants = search_variants(term)
-
-        found_for_term = False
-        for page in document:
-            for variant in variants:
-                if not variant:
-                    continue
-                rects = page.search_for(variant)
-                if not rects:
-                    continue
-                for rect in rects:
-                    annot = page.add_highlight_annot(rect)
-                    annot.set_colors(stroke=(1, 0.86, 0.18))
-                    annot.update()
-                    highlighted += 1
-                found_for_term = True
-                break
-            if found_for_term:
-                break
-
-    output_pdf.parent.mkdir(parents=True, exist_ok=True)
-    document.save(output_pdf, garbage=4, deflate=True)
-    document.close()
-    return highlighted
+        if candidate not in cleaned:
+            cleaned.append(candidate)
+    return cleaned
 
 
 def highlight_rows_in_pdf(
@@ -163,34 +146,45 @@ def highlight_rows_in_pdf(
             continue
         page, rect = find_first_rect(document, clean_term)
         if page and rect:
-            highlight_band(page, rect)
+            add_value_highlight(page, rect)
             highlighted += 1
 
     for row in sampled_rows:
         if row.get("Conformite") != "CONFORME":
             continue
-        candidates = split_highlight_values(row.get("SPEC", "")) + split_highlight_values(row.get("RESULTS", ""))
-        candidates = [candidate for candidate in candidates if candidate.upper() not in {"NA", "OK"}]
-        best_page = None
-        best_rect = None
-        best_score = -1
 
+        candidates = clean_row_candidates(row)
+        if not candidates:
+            continue
+
+        page_index = int(row.get("Page", "0")) - 1 if str(row.get("Page", "")).isdigit() else -1
+        if not 0 <= page_index < len(document):
+            continue
+        page = document[page_index]
+
+        anchor_rect = None
+        for candidate in sorted([c for c in candidates if c.upper() != "OK"], key=len, reverse=True):
+            rects = find_rects_on_page(page, candidate)
+            if rects:
+                anchor_rect = rects[0]
+                break
+
+        if anchor_rect is None:
+            continue
+
+        line_highlighted = 0
         for candidate in candidates:
-            page, rect = find_first_rect(document, candidate, row.get("Page"))
-            if not page or not rect:
+            rects = find_rects_on_page(page, candidate)
+            if not rects:
                 continue
-            same_line_score = 0
-            for other in candidates:
-                other_page, other_rect = find_first_rect(document, other, row.get("Page"))
-                if other_page == page and other_rect and abs(other_rect.y0 - rect.y0) <= 8:
-                    same_line_score += 1
-            if same_line_score > best_score:
-                best_page = page
-                best_rect = rect
-                best_score = same_line_score
+            for rect in rects:
+                if abs(rect.y0 - anchor_rect.y0) <= 8:
+                    add_value_highlight(page, rect)
+                    highlighted += 1
+                    line_highlighted += 1
 
-        if best_page and best_rect:
-            highlight_band(best_page, best_rect)
+        if line_highlighted == 0:
+            add_value_highlight(page, anchor_rect)
             highlighted += 1
 
     output_pdf.parent.mkdir(parents=True, exist_ok=True)
@@ -216,13 +210,17 @@ def build_highlight_data(
     for row in standard_rows:
         standard_terms.extend(split_highlight_values(row.get("Norme", "")))
 
-    eligible_rows = [
-        row for row in inspection_rows
-        if row.get("Conformite") == "CONFORME"
-        and (row.get("SPEC", "NA") != "NA" or row.get("RESULTS", "NA") != "NA")
-    ]
-    sample_count = min(max(sample_size, 0), len(eligible_rows))
-    sampled_rows = random.sample(eligible_rows, sample_count) if sample_count else []
+    sampled_rows: list[dict[str, str]] = []
+    shuffled_rows = inspection_rows[:]
+    random.shuffle(shuffled_rows)
+    for row in shuffled_rows:
+        if len(sampled_rows) >= sample_size:
+            break
+        if row.get("Conformite") != "CONFORME":
+            continue
+        if row.get("SPEC", "NA") == "NA" and row.get("RESULTS", "NA") == "NA":
+            continue
+        sampled_rows.append(row)
 
     return cover_terms, standard_terms, sampled_rows
 
@@ -253,11 +251,9 @@ def process():
     upload_dir = run_dir / "uploads"
     upload_dir.mkdir(parents=True, exist_ok=True)
 
-    cover_rows: list[dict[str, str]] = []
-    standard_rows: list[dict[str, str]] = []
-    inspection_rows: list[dict[str, str]] = []
     warnings: list[str] = []
     highlighted_paths: list[Path] = []
+    sampled_total = 0
 
     for uploaded_file in pdf_files:
         original_name = uploaded_file.filename or "document.pdf"
@@ -277,33 +273,14 @@ def process():
         highlighted_pdf_path = run_dir / "highlighted" / verified_pdf_name(original_name)
         highlight_rows_in_pdf(pdf_path, highlighted_pdf_path, cover_terms, standard_terms, sampled_rows)
         highlighted_paths.append(highlighted_pdf_path)
+        sampled_total += len(sampled_rows)
 
-        cover_rows.extend(report.cover_rows)
-        standard_rows.extend(report.standard_rows)
-        inspection_rows.extend(report.inspection_rows)
         warnings.extend(report.warnings)
 
-    excel_path = run_dir / "rapport_pcb.xlsx"
-    write_excel_report(cover_rows, standard_rows, inspection_rows, excel_path)
-
-    total_checks = len(inspection_rows) + len(cover_rows) + len(standard_rows)
-    non_conforme_count = (
-        sum(1 for row in inspection_rows if row.get("Conformite") == "NON CONFORME")
-        + sum(1 for row in cover_rows if row.get("Comparaison") == "DIFFERENT")
-    )
-    verify_count = (
-        sum(1 for row in inspection_rows if row.get("Conformite") == "A VERIFIER")
-        + sum(1 for row in cover_rows if row.get("Comparaison") == "A VERIFIER")
-        + sum(1 for row in standard_rows if row.get("Norme") == "NA")
-    )
     stats = {
         "pdf_count": len(pdf_files),
-        "cover_count": len(cover_rows),
-        "standard_count": len(standard_rows),
-        "inspection_count": total_checks,
-        "conforme_count": max(total_checks - non_conforme_count - verify_count, 0),
-        "non_conforme_count": non_conforme_count,
-        "verify_count": verify_count,
+        "sampled_count": sampled_total,
+        "highlighted_count": len(highlighted_paths),
     }
     uploaded_names = [file.filename or "document.pdf" for file in pdf_files]
     RUN_DOWNLOAD_NAMES[run_id] = report_download_name(uploaded_names)
@@ -318,12 +295,6 @@ def process():
         sample_size=sample_size,
         highlighted_count=len(highlighted_paths),
         warnings=warnings,
-        cover_columns=[column for column in COVER_COLUMNS if column != "FileName"],
-        standard_columns=[column for column in STANDARD_COLUMNS if column != "FileName"],
-        inspection_columns=[column for column in INSPECTION_COLUMNS if column != "FileName"],
-        cover_rows=cover_rows,
-        standard_rows=standard_rows,
-        inspection_rows=inspection_rows,
     )
 
 
