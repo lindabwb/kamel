@@ -73,6 +73,43 @@ def split_highlight_values(value: str) -> list[str]:
     return cleaned
 
 
+def highlight_band(page, rect, color=(1, 0.86, 0.18)) -> None:
+    band = fitz.Rect(24, max(rect.y0 - 2, 0), page.rect.width - 24, min(rect.y1 + 2, page.rect.height))
+    annot = page.add_highlight_annot(band)
+    annot.set_colors(stroke=color)
+    annot.update()
+
+
+def search_variants(term: str) -> list[str]:
+    variants = [
+        term,
+        term.replace(" +/- ", "±").replace("+/-", "±"),
+        term.replace(" ", ""),
+    ]
+    if term.upper() == "UL 94V-0":
+        variants.extend(["94V-0", "UL 94 Flame Class 94V-0"])
+    if term.upper() == "ROHS DIRECTIVE":
+        variants.extend(["RoHS", "RoHS Directive"])
+    return list(dict.fromkeys([variant for variant in variants if variant]))
+
+
+def find_first_rect(document, term: str, page_number: str | None = None):
+    page_indexes: list[int] = []
+    if page_number and str(page_number).isdigit():
+        index = int(page_number) - 1
+        if 0 <= index < len(document):
+            page_indexes.append(index)
+    page_indexes.extend(index for index in range(len(document)) if index not in page_indexes)
+
+    for index in page_indexes:
+        page = document[index]
+        for variant in search_variants(term):
+            rects = page.search_for(variant)
+            if rects:
+                return page, rects[0]
+    return None, None
+
+
 def highlight_terms_in_pdf(source_pdf: Path, output_pdf: Path, terms: list[str]) -> int:
     document = fitz.open(source_pdf)
     highlighted = 0
@@ -84,15 +121,7 @@ def highlight_terms_in_pdf(source_pdf: Path, output_pdf: Path, terms: list[str])
             continue
         seen_terms.add(term)
 
-        variants = [
-            term,
-            term.replace(" +/- ", "±").replace("+/-", "±"),
-            term.replace(" ", ""),
-        ]
-        if term.upper() == "UL 94V-0":
-            variants.extend(["94V-0", "UL 94 Flame Class 94V-0"])
-        if term.upper() == "ROHS DIRECTIVE":
-            variants.extend(["RoHS", "RoHS Directive"])
+        variants = search_variants(term)
 
         found_for_term = False
         for page in document:
@@ -118,34 +147,84 @@ def highlight_terms_in_pdf(source_pdf: Path, output_pdf: Path, terms: list[str])
     return highlighted
 
 
-def build_highlight_terms(
+def highlight_rows_in_pdf(
+    source_pdf: Path,
+    output_pdf: Path,
+    cover_terms: list[str],
+    standard_terms: list[str],
+    sampled_rows: list[dict[str, str]],
+) -> int:
+    document = fitz.open(source_pdf)
+    highlighted = 0
+
+    for term in cover_terms + standard_terms:
+        clean_term = " ".join(str(term).split())
+        if not clean_term or clean_term.upper() in {"NA", "OK"}:
+            continue
+        page, rect = find_first_rect(document, clean_term)
+        if page and rect:
+            highlight_band(page, rect)
+            highlighted += 1
+
+    for row in sampled_rows:
+        if row.get("Conformite") != "CONFORME":
+            continue
+        candidates = split_highlight_values(row.get("SPEC", "")) + split_highlight_values(row.get("RESULTS", ""))
+        candidates = [candidate for candidate in candidates if candidate.upper() not in {"NA", "OK"}]
+        best_page = None
+        best_rect = None
+        best_score = -1
+
+        for candidate in candidates:
+            page, rect = find_first_rect(document, candidate, row.get("Page"))
+            if not page or not rect:
+                continue
+            same_line_score = 0
+            for other in candidates:
+                other_page, other_rect = find_first_rect(document, other, row.get("Page"))
+                if other_page == page and other_rect and abs(other_rect.y0 - rect.y0) <= 8:
+                    same_line_score += 1
+            if same_line_score > best_score:
+                best_page = page
+                best_rect = rect
+                best_score = same_line_score
+
+        if best_page and best_rect:
+            highlight_band(best_page, best_rect)
+            highlighted += 1
+
+    output_pdf.parent.mkdir(parents=True, exist_ok=True)
+    document.save(output_pdf, garbage=4, deflate=True)
+    document.close()
+    return highlighted
+
+
+def build_highlight_data(
     cover_rows: list[dict[str, str]],
     standard_rows: list[dict[str, str]],
     inspection_rows: list[dict[str, str]],
     sample_size: int,
-) -> list[str]:
-    terms: list[str] = []
+) -> tuple[list[str], list[str], list[dict[str, str]]]:
+    cover_terms: list[str] = []
+    standard_terms: list[str] = []
 
     for row in cover_rows:
         if row.get("Champ") == "QUANTITY":
             continue
-        terms.extend(split_highlight_values(row.get("Valeur page de garde", "")))
+        cover_terms.extend(split_highlight_values(row.get("Valeur page de garde", "")))
 
     for row in standard_rows:
-        terms.extend(split_highlight_values(row.get("Norme", "")))
+        standard_terms.extend(split_highlight_values(row.get("Norme", "")))
 
     eligible_rows = [
         row for row in inspection_rows
-        if row.get("SPEC", "NA") != "NA" or row.get("RESULTS", "NA") != "NA"
+        if row.get("Conformite") == "CONFORME"
+        and (row.get("SPEC", "NA") != "NA" or row.get("RESULTS", "NA") != "NA")
     ]
     sample_count = min(max(sample_size, 0), len(eligible_rows))
     sampled_rows = random.sample(eligible_rows, sample_count) if sample_count else []
 
-    for row in sampled_rows:
-        terms.extend(split_highlight_values(row.get("SPEC", "")))
-        terms.extend(split_highlight_values(row.get("RESULTS", "")))
-
-    return terms
+    return cover_terms, standard_terms, sampled_rows
 
 
 @app.route("/", methods=["GET"])
@@ -189,14 +268,14 @@ def process():
         uploaded_file.save(pdf_path)
 
         report = extract_pdf_report(pdf_path, display_name=original_name)
-        terms = build_highlight_terms(
+        cover_terms, standard_terms, sampled_rows = build_highlight_data(
             report.cover_rows,
             report.standard_rows,
             report.inspection_rows,
             sample_size,
         )
         highlighted_pdf_path = run_dir / "highlighted" / verified_pdf_name(original_name)
-        highlight_terms_in_pdf(pdf_path, highlighted_pdf_path, terms)
+        highlight_rows_in_pdf(pdf_path, highlighted_pdf_path, cover_terms, standard_terms, sampled_rows)
         highlighted_paths.append(highlighted_pdf_path)
 
         cover_rows.extend(report.cover_rows)

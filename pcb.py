@@ -833,6 +833,7 @@ def extract_pdf_report(pdf_path: Path, display_name: Optional[str] = None) -> Pd
                         page_rows.append(
                             {
                                 "FileName": file_name,
+                                "Page": str(page.page_number),
                                 "TestName": test_name or "NA",
                                 "SPEC": spec,
                                 "RESULTS": results,
@@ -848,6 +849,7 @@ def extract_pdf_report(pdf_path: Path, display_name: Optional[str] = None) -> Pd
         inspection_rows.append(
             {
                 "FileName": file_name,
+                "Page": "NA",
                 "TestName": "NA",
                 "SPEC": "NA",
                 "RESULTS": "NA",
