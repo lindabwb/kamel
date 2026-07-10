@@ -33,13 +33,25 @@
           <span class="drop-copy">Plusieurs fichiers peuvent être traités en une seule fois.</span>
           <span id="selectedFiles" class="selected-files">Aucun fichier sélectionné</span>
         </label>
+        <label class="sample-control">
+          <span>Lignes aléatoires à surligner</span>
+          <input type="number" name="sample_size" min="0" max="200" value="10">
+        </label>
         <button id="analyzeButton" class="button primary" type="submit" disabled>Analyser</button>
       </form>
     </section>
 
     {% if processed %}
     <section class="files-panel">
-      <strong>Fichiers analysés</strong>
+      <div class="files-header">
+        <strong>Fichiers analysés</strong>
+        <a class="button secondary" href="{{ url_for('download_highlighted', run_id=run_id) }}">
+          Télécharger PDF surligné
+        </a>
+      </div>
+      <p class="files-note">
+        Le PDF surligné vérifie la page de garde hors quantité, les normes, et {{ sample_size }} ligne(s) aléatoire(s) des tableaux. Le nom téléchargé finit par V.
+      </p>
       <ul>
         {% for name in uploaded_names %}
         <li>{{ name }}</li>

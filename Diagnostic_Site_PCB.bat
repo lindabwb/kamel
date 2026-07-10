@@ -11,7 +11,7 @@ if errorlevel 1 (
 
 echo.
 echo Verification des modules...
-python -c "import flask, pdfplumber, openpyxl; print('Modules OK')"
+python -c "import flask, pdfplumber, openpyxl, fitz; print('Modules OK')"
 if errorlevel 1 (
   echo.
   echo Il manque des dependances. Lancez Installer_dependances.bat puis reessayez.

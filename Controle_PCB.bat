@@ -14,11 +14,11 @@ if errorlevel 1 (
   exit /b 1
 )
 
-python -c "import flask, pdfplumber, openpyxl, werkzeug" >nul 2>&1
+python -c "import flask, pdfplumber, openpyxl, werkzeug, fitz" >nul 2>&1
 if errorlevel 1 (
   echo Installation automatique des modules necessaires...
   python -m pip install --upgrade pip
-  python -m pip install pdfplumber openpyxl flask werkzeug
+  python -m pip install pdfplumber openpyxl flask werkzeug pymupdf
   if errorlevel 1 (
     echo.
     echo Installation impossible. Verifiez la connexion internet ou les droits du poste.
@@ -33,3 +33,4 @@ echo Gardez cette fenetre ouverte pendant l'utilisation.
 echo.
 python web_app.py
 pause
+ici 

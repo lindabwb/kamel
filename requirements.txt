@@ -3,3 +3,4 @@ gunicorn
 pdfplumber
 openpyxl
 werkzeug
+pymupdf
