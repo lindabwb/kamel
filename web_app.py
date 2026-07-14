@@ -70,6 +70,15 @@ def split_highlight_values(value: str) -> list[str]:
     return cleaned
 
 
+def tokenize_for_highlight(value: str) -> list[str]:
+    tokens: list[str] = []
+    for part in split_highlight_values(value):
+        tokens.append(part)
+        if " " in part:
+            tokens.extend(piece.strip() for piece in part.split(" ") if piece.strip())
+    return list(dict.fromkeys(token for token in tokens if token and token.upper() != "NA"))
+
+
 def add_value_highlight(page, rect, color=(1, 0.86, 0.18)) -> None:
     annot = page.add_highlight_annot(rect)
     annot.set_colors(stroke=color)
@@ -81,6 +90,7 @@ def search_variants(term: str) -> list[str]:
         term,
         term.replace(" +/- ", "±").replace("+/-", "±"),
         term.replace(" ", ""),
+        term.replace(" / ", "/"),
     ]
     if term.upper() == "UL 94V-0":
         variants.extend(["94V-0", "UL 94 Flame Class 94V-0"])
@@ -117,9 +127,9 @@ def find_rects_on_page(page, term: str) -> list[fitz.Rect]:
 def clean_row_candidates(row: dict[str, str]) -> list[str]:
     candidates: list[str] = []
     for chunk in str(row.get("TestName", "")).split(" - "):
-        candidates.extend(split_highlight_values(chunk))
-    candidates.extend(split_highlight_values(row.get("SPEC", "")))
-    candidates.extend(split_highlight_values(row.get("RESULTS", "")))
+        candidates.extend(tokenize_for_highlight(chunk))
+    candidates.extend(tokenize_for_highlight(row.get("SPEC", "")))
+    candidates.extend(tokenize_for_highlight(row.get("RESULTS", "")))
 
     cleaned: list[str] = []
     for candidate in candidates:
@@ -166,9 +176,7 @@ def first_table_required(row: dict[str, str]) -> bool:
     ]
     if any(term in text for term in required_terms):
         return True
-
-    impedance_markers = ["L10", "L3", "L2", "L13", "L1", "B2", "B1"]
-    return "IMPEDANCE" in text and any(marker in text for marker in impedance_markers)
+    return False
 
 
 def is_hole_size_row(row: dict[str, str]) -> bool:
@@ -208,6 +216,10 @@ def is_stackup_row(row: dict[str, str]) -> bool:
     return "MIL" in text and any(term in text for term in stackup_terms)
 
 
+def row_contains(row: dict[str, str], term: str) -> bool:
+    return term.upper() in row_text(row)
+
+
 def highlight_rows_in_pdf(
     source_pdf: Path,
     output_pdf: Path,
@@ -215,6 +227,7 @@ def highlight_rows_in_pdf(
     standard_terms: list[str],
     selected_rows: list[dict[str, str]],
     extra_terms: list[str],
+    page_terms: list[tuple[str, str]],
 ) -> int:
     document = fitz.open(source_pdf)
     highlighted = 0
@@ -228,8 +241,16 @@ def highlight_rows_in_pdf(
             add_value_highlight(page, rect)
             highlighted += 1
 
+    for term, page_number in page_terms:
+        page, rect = find_first_rect(document, term, page_number)
+        if page and rect:
+            add_value_highlight(page, rect)
+            highlighted += 1
+
     for row in selected_rows:
         candidates = clean_row_candidates(row)
+        if is_stackup_row(row):
+            candidates = [candidate for candidate in candidates if len(candidate) > 1]
         if not candidates:
             continue
 
@@ -274,7 +295,7 @@ def build_highlight_data(
     standard_rows: list[dict[str, str]],
     inspection_rows: list[dict[str, str]],
     sample_size: int = 0,
-) -> tuple[list[str], list[str], list[dict[str, str]], list[str]]:
+) -> tuple[list[str], list[str], list[dict[str, str]], list[str], list[tuple[str, str]]]:
     cover_terms: list[str] = []
     standard_terms: list[str] = []
 
@@ -287,6 +308,7 @@ def build_highlight_data(
             standard_terms.extend(["UL 94 Flame Class 94V-0", "94V-0"])
 
     selected_rows: list[dict[str, str]] = []
+    page_terms: list[tuple[str, str]] = []
 
     def add_row(row: dict[str, str], require_conformity: bool = True) -> None:
         if require_conformity and row.get("Conformite") != "CONFORME":
@@ -298,6 +320,12 @@ def build_highlight_data(
     for row in inspection_rows:
         if first_table_required(row):
             add_row(row, require_conformity=True)
+        if row_contains(row, "COPPER THICKNESS - PTH") and row.get("Conformite") == "CONFORME":
+            page_terms.append(("PTH", row.get("Page", "")))
+        if row_contains(row, "VIAS FILLING") and row.get("Conformite") == "CONFORME":
+            page_terms.append(("Vias filling", row.get("Page", "")))
+        if row_contains(row, "AFTER FINISH") and row.get("Conformite") == "CONFORME":
+            page_terms.append(("AFTER FINISH", row.get("Page", "")))
 
     hole_rows = [row for row in inspection_rows if is_hole_size_row(row) and row.get("Conformite") == "CONFORME"]
     if hole_rows:
@@ -313,7 +341,7 @@ def build_highlight_data(
 
     extra_terms = ["HOLE WALL COPPER THICKNESS"]
 
-    return cover_terms, standard_terms, selected_rows, extra_terms
+    return cover_terms, standard_terms, selected_rows, extra_terms, page_terms
 
 
 @app.route("/", methods=["GET"])
@@ -350,13 +378,13 @@ def process():
         uploaded_file.save(pdf_path)
 
         report = extract_pdf_report(pdf_path, display_name=original_name)
-        cover_terms, standard_terms, selected_rows, extra_terms = build_highlight_data(
+        cover_terms, standard_terms, selected_rows, extra_terms, page_terms = build_highlight_data(
             report.cover_rows,
             report.standard_rows,
             report.inspection_rows,
         )
         highlighted_pdf_path = run_dir / "highlighted" / verified_pdf_name(original_name)
-        highlight_rows_in_pdf(pdf_path, highlighted_pdf_path, cover_terms, standard_terms, selected_rows, extra_terms)
+        highlight_rows_in_pdf(pdf_path, highlighted_pdf_path, cover_terms, standard_terms, selected_rows, extra_terms, page_terms)
         highlighted_paths.append(highlighted_pdf_path)
         sampled_total += len(selected_rows)
 
