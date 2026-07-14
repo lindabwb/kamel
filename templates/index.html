@@ -30,10 +30,6 @@
           <span class="drop-copy">Plusieurs fichiers peuvent être traités en une seule fois.</span>
           <span id="selectedFiles" class="selected-files">Aucun fichier sélectionné</span>
         </label>
-        <label class="sample-control">
-          <span>Lignes aléatoires à surligner</span>
-          <input type="number" name="sample_size" min="0" max="200" value="10">
-        </label>
         <button id="analyzeButton" class="button primary" type="submit" disabled>Analyser</button>
       </form>
     </section>
@@ -47,7 +43,7 @@
         </a>
       </div>
       <p class="files-note">
-        Le PDF surligné vérifie la page de garde hors quantité, les normes, et {{ sample_size }} ligne(s) aléatoire(s) conformes des tableaux. Le nom téléchargé finit par V.
+        Le PDF surligné applique les règles fixes: quantité en page de garde, UL 94V-0, lignes techniques ciblées, hole size, plus grande dimension, hole wall copper thickness et stack-up. Le nom téléchargé finit par V.
       </p>
       <ul>
         {% for name in uploaded_names %}
@@ -59,7 +55,7 @@
     <section class="summary-grid" aria-label="Résumé">
       <div class="metric"><span>PDF</span><strong>{{ stats.pdf_count }}</strong></div>
       <div class="metric"><span>PDF modifiés</span><strong>{{ stats.highlighted_count }}</strong></div>
-      <div class="metric ok"><span>Lignes échantillon</span><strong>{{ stats.sampled_count }}</strong></div>
+      <div class="metric ok"><span>Lignes ciblées</span><strong>{{ stats.sampled_count }}</strong></div>
     </section>
 
     {% if warnings %}

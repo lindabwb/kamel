@@ -6,8 +6,9 @@ import threading
 import time
 import uuid
 import webbrowser
-import random
 import zipfile
+import re
+import random
 from pathlib import Path
 
 import fitz
@@ -130,17 +131,95 @@ def clean_row_candidates(row: dict[str, str]) -> list[str]:
     return cleaned
 
 
+def row_text(row: dict[str, str]) -> str:
+    return " ".join(str(row.get(key, "")) for key in ("TestName", "SPEC", "RESULTS")).upper()
+
+
+def is_cover_quantity(row: dict[str, str]) -> bool:
+    return row.get("Champ") == "QUANTITY"
+
+
+def is_ul94_standard(row: dict[str, str]) -> bool:
+    return "94V-0" in str(row.get("Norme", "")).upper()
+
+
+def first_table_required(row: dict[str, str]) -> bool:
+    text = row_text(row)
+    required_terms = [
+        "LAMINATE MATERIAL",
+        "CONDUCTOR WIDTH",
+        "CONDUCTOR SPACE",
+        "ANNULAR RING",
+        "COPPER THICKNESS - PTH",
+        "COPPER THICKNESS - VIAS FILLING",
+        "SOLDERABILITY TEST",
+        "ELECTRIC TEST",
+        "ADHESION - FINISH",
+        "ADHESION - SOLDER RESIST",
+        "WARP",
+        "SOLDER MASK THICKNESS",
+        "GOLD THICKNESS",
+        "NICKEL THICKNESS",
+        "INOIC CONTAMINATION",
+        "IONIC CONTAMINATION",
+        "AFTER FINISH",
+    ]
+    if any(term in text for term in required_terms):
+        return True
+
+    impedance_markers = ["L10", "L3", "L2", "L13", "L1", "B2", "B1"]
+    return "IMPEDANCE" in text and any(marker in text for marker in impedance_markers)
+
+
+def is_hole_size_row(row: dict[str, str]) -> bool:
+    name = str(row.get("TestName", "")).strip().upper()
+    spec = str(row.get("SPEC", "")).upper()
+    results = str(row.get("RESULTS", "")).upper()
+    if not re.fullmatch(r"[A-Z]", name):
+        return False
+    return bool(re.search(r"\d", spec) and re.search(r"\d", results))
+
+
+def is_dimension_row(row: dict[str, str]) -> bool:
+    name = str(row.get("TestName", "")).upper()
+    spec = str(row.get("SPEC", ""))
+    if "ITEM" not in name:
+        return False
+    return bool(re.search(r"±|\+/-", spec) and re.search(r"\d", spec))
+
+
+def first_number(value: str) -> float:
+    match = re.search(r"(?<!\d)-?\d+(?:[.,]\d+)?", value)
+    return float(match.group(0).replace(",", ".")) if match else -1.0
+
+
+def is_stackup_row(row: dict[str, str]) -> bool:
+    text = row_text(row)
+    stackup_terms = [
+        "SOLDER MASK",
+        "LAYER",
+        "COPPER",
+        "CORE",
+        " PP",
+        "PP ",
+        "VT-",
+        "MIL",
+    ]
+    return "MIL" in text and any(term in text for term in stackup_terms)
+
+
 def highlight_rows_in_pdf(
     source_pdf: Path,
     output_pdf: Path,
     cover_terms: list[str],
     standard_terms: list[str],
-    sampled_rows: list[dict[str, str]],
+    selected_rows: list[dict[str, str]],
+    extra_terms: list[str],
 ) -> int:
     document = fitz.open(source_pdf)
     highlighted = 0
 
-    for term in cover_terms + standard_terms:
+    for term in cover_terms + standard_terms + extra_terms:
         clean_term = " ".join(str(term).split())
         if not clean_term or clean_term.upper() in {"NA", "OK"}:
             continue
@@ -149,10 +228,7 @@ def highlight_rows_in_pdf(
             add_value_highlight(page, rect)
             highlighted += 1
 
-    for row in sampled_rows:
-        if row.get("Conformite") != "CONFORME":
-            continue
-
+    for row in selected_rows:
         candidates = clean_row_candidates(row)
         if not candidates:
             continue
@@ -197,32 +273,47 @@ def build_highlight_data(
     cover_rows: list[dict[str, str]],
     standard_rows: list[dict[str, str]],
     inspection_rows: list[dict[str, str]],
-    sample_size: int,
-) -> tuple[list[str], list[str], list[dict[str, str]]]:
+    sample_size: int = 0,
+) -> tuple[list[str], list[str], list[dict[str, str]], list[str]]:
     cover_terms: list[str] = []
     standard_terms: list[str] = []
 
     for row in cover_rows:
-        if row.get("Champ") == "QUANTITY":
-            continue
-        cover_terms.extend(split_highlight_values(row.get("Valeur page de garde", "")))
+        if is_cover_quantity(row):
+            cover_terms.extend(split_highlight_values(row.get("Valeur page de garde", "")))
 
     for row in standard_rows:
-        standard_terms.extend(split_highlight_values(row.get("Norme", "")))
+        if is_ul94_standard(row):
+            standard_terms.extend(["UL 94 Flame Class 94V-0", "94V-0"])
 
-    sampled_rows: list[dict[str, str]] = []
-    shuffled_rows = inspection_rows[:]
-    random.shuffle(shuffled_rows)
-    for row in shuffled_rows:
-        if len(sampled_rows) >= sample_size:
-            break
-        if row.get("Conformite") != "CONFORME":
-            continue
-        if row.get("SPEC", "NA") == "NA" and row.get("RESULTS", "NA") == "NA":
-            continue
-        sampled_rows.append(row)
+    selected_rows: list[dict[str, str]] = []
 
-    return cover_terms, standard_terms, sampled_rows
+    def add_row(row: dict[str, str], require_conformity: bool = True) -> None:
+        if require_conformity and row.get("Conformite") != "CONFORME":
+            return
+        if row in selected_rows:
+            return
+        selected_rows.append(row)
+
+    for row in inspection_rows:
+        if first_table_required(row):
+            add_row(row, require_conformity=True)
+
+    hole_rows = [row for row in inspection_rows if is_hole_size_row(row) and row.get("Conformite") == "CONFORME"]
+    if hole_rows:
+        add_row(random.choice(hole_rows), require_conformity=True)
+
+    dimension_rows = [row for row in inspection_rows if is_dimension_row(row) and row.get("Conformite") == "CONFORME"]
+    if dimension_rows:
+        add_row(max(dimension_rows, key=lambda row: first_number(str(row.get("SPEC", "")))), require_conformity=True)
+
+    for row in inspection_rows:
+        if is_stackup_row(row):
+            add_row(row, require_conformity=False)
+
+    extra_terms = ["HOLE WALL COPPER THICKNESS"]
+
+    return cover_terms, standard_terms, selected_rows, extra_terms
 
 
 @app.route("/", methods=["GET"])
@@ -234,11 +325,6 @@ def index():
 def process():
     files = [file for file in request.files.getlist("pdfs") if file and file.filename]
     pdf_files = [file for file in files if is_pdf(file.filename)]
-    try:
-        sample_size = int(request.form.get("sample_size", "10"))
-    except ValueError:
-        sample_size = 10
-    sample_size = max(0, min(sample_size, 200))
 
     if not pdf_files:
         return render_template(
@@ -264,16 +350,15 @@ def process():
         uploaded_file.save(pdf_path)
 
         report = extract_pdf_report(pdf_path, display_name=original_name)
-        cover_terms, standard_terms, sampled_rows = build_highlight_data(
+        cover_terms, standard_terms, selected_rows, extra_terms = build_highlight_data(
             report.cover_rows,
             report.standard_rows,
             report.inspection_rows,
-            sample_size,
         )
         highlighted_pdf_path = run_dir / "highlighted" / verified_pdf_name(original_name)
-        highlight_rows_in_pdf(pdf_path, highlighted_pdf_path, cover_terms, standard_terms, sampled_rows)
+        highlight_rows_in_pdf(pdf_path, highlighted_pdf_path, cover_terms, standard_terms, selected_rows, extra_terms)
         highlighted_paths.append(highlighted_pdf_path)
-        sampled_total += len(sampled_rows)
+        sampled_total += len(selected_rows)
 
         warnings.extend(report.warnings)
 
@@ -292,7 +377,6 @@ def process():
         run_id=run_id,
         stats=stats,
         uploaded_names=uploaded_names,
-        sample_size=sample_size,
         highlighted_count=len(highlighted_paths),
         warnings=warnings,
     )
