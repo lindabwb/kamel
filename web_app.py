@@ -85,6 +85,27 @@ def add_value_highlight(page, rect, color=(1, 0.86, 0.18)) -> None:
     annot.update()
 
 
+def page_words(page) -> list[tuple[float, float, float, float, str]]:
+    return [
+        (float(word[0]), float(word[1]), float(word[2]), float(word[3]), str(word[4]))
+        for word in page.get_text("words")
+    ]
+
+
+def highlight_text_line(page, anchor_rect, words: list[tuple[float, float, float, float, str]]) -> int:
+    anchor_mid = (anchor_rect.y0 + anchor_rect.y1) / 2
+    highlighted = 0
+    for x0, y0, x1, y1, text in words:
+        if not text.strip():
+            continue
+        word_mid = (y0 + y1) / 2
+        if abs(word_mid - anchor_mid) > 3.5:
+            continue
+        add_value_highlight(page, fitz.Rect(x0, y0, x1, y1))
+        highlighted += 1
+    return highlighted
+
+
 def search_variants(term: str) -> list[str]:
     variants = [
         term,
@@ -231,6 +252,7 @@ def highlight_rows_in_pdf(
 ) -> int:
     document = fitz.open(source_pdf)
     highlighted = 0
+    words_by_page: dict[int, list[tuple[float, float, float, float, str]]] = {}
 
     for term in cover_terms + standard_terms + extra_terms:
         clean_term = " ".join(str(term).split())
@@ -258,6 +280,7 @@ def highlight_rows_in_pdf(
         if not 0 <= page_index < len(document):
             continue
         page = document[page_index]
+        words = words_by_page.setdefault(page_index, page_words(page))
 
         anchor_rect = None
         for candidate in sorted([c for c in candidates if c.upper() != "OK"], key=len, reverse=True):
@@ -269,23 +292,14 @@ def highlight_rows_in_pdf(
         if anchor_rect is None:
             continue
 
-        line_highlighted = 0
-        for candidate in candidates:
-            rects = find_rects_on_page(page, candidate)
-            if not rects:
-                continue
-            for rect in rects:
-                if abs(rect.y0 - anchor_rect.y0) <= 8:
-                    add_value_highlight(page, rect)
-                    highlighted += 1
-                    line_highlighted += 1
-
+        line_highlighted = highlight_text_line(page, anchor_rect, words)
+        highlighted += line_highlighted
         if line_highlighted == 0:
             add_value_highlight(page, anchor_rect)
             highlighted += 1
 
     output_pdf.parent.mkdir(parents=True, exist_ok=True)
-    document.save(output_pdf, garbage=4, deflate=True)
+    document.save(output_pdf, garbage=1, deflate=False)
     document.close()
     return highlighted
 
@@ -377,18 +391,32 @@ def process():
         pdf_path = upload_dir / filename
         uploaded_file.save(pdf_path)
 
-        report = extract_pdf_report(pdf_path, display_name=original_name)
-        cover_terms, standard_terms, selected_rows, extra_terms, page_terms = build_highlight_data(
-            report.cover_rows,
-            report.standard_rows,
-            report.inspection_rows,
-        )
-        highlighted_pdf_path = run_dir / "highlighted" / verified_pdf_name(original_name)
-        highlight_rows_in_pdf(pdf_path, highlighted_pdf_path, cover_terms, standard_terms, selected_rows, extra_terms, page_terms)
-        highlighted_paths.append(highlighted_pdf_path)
-        sampled_total += len(selected_rows)
-
-        warnings.extend(report.warnings)
+        try:
+            report = extract_pdf_report(pdf_path, display_name=original_name)
+            cover_terms, standard_terms, selected_rows, extra_terms, page_terms = build_highlight_data(
+                report.cover_rows,
+                report.standard_rows,
+                report.inspection_rows,
+            )
+            highlighted_pdf_path = run_dir / "highlighted" / verified_pdf_name(original_name)
+            highlight_rows_in_pdf(
+                pdf_path,
+                highlighted_pdf_path,
+                cover_terms,
+                standard_terms,
+                selected_rows,
+                extra_terms,
+                page_terms,
+            )
+            highlighted_paths.append(highlighted_pdf_path)
+            sampled_total += len(selected_rows)
+            warnings.extend(report.warnings)
+        except Exception as exc:
+            shutil.rmtree(run_dir, ignore_errors=True)
+            return render_template(
+                "index.html",
+                error=f"Erreur pendant le traitement de {original_name}: {exc}",
+            )
 
     stats = {
         "pdf_count": len(pdf_files),
