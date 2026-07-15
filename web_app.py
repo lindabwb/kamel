@@ -106,11 +106,22 @@ def highlight_text_line(page, anchor_rect, words: list[tuple[float, float, float
     return highlighted
 
 
+def highlight_first_line_containing(document, terms: list[str]) -> int:
+    for page in document:
+        words = page_words(page)
+        for term in terms:
+            for variant in search_variants(term):
+                rects = page.search_for(variant)
+                if rects:
+                    return highlight_text_line(page, rects[0], words)
+    return 0
+
+
 def highlight_stackup_pages(document, page_numbers: set[str]) -> int:
-    if not page_numbers:
-        for index, page in enumerate(document):
-            if page.search_for("STACKUP") or page.search_for("STACK UP") or page.search_for("STACK-UP"):
-                page_numbers.add(str(index + 1))
+    for index, page in enumerate(document):
+        text = page.get_text("text").upper().replace(" ", "")
+        if "STACKUP" in text and ("TYPE" in text or "VENDOR" in text or "THICKNESS" in text):
+            page_numbers.add(str(index + 1))
 
     highlighted = 0
     for page_number in page_numbers:
@@ -120,18 +131,20 @@ def highlight_stackup_pages(document, page_numbers: set[str]) -> int:
         if not 0 <= page_index < len(document):
             continue
         page = document[page_index]
-        started = False
-        for x0, y0, x1, y1, text in page_words(page):
+        words = page_words(page)
+        stack_y = None
+        for x0, y0, x1, y1, text in words:
+            upper = text.strip().upper()
+            if "STACK" in upper or upper == "TYPE":
+                stack_y = y0 if stack_y is None else min(stack_y, y0)
+        if stack_y is None:
+            continue
+
+        for x0, y0, x1, y1, text in words:
             clean = text.strip()
             if not clean:
                 continue
-            if "STACK" in clean.upper():
-                started = True
-                if clean.upper() in {"STACKUP", "STACK-UP", "STACK"}:
-                    continue
-            if not started:
-                continue
-            if y0 < 90 or y0 > page.rect.height - 40:
+            if y0 < stack_y or y0 > page.rect.height - 40:
                 continue
             add_value_highlight(page, fitz.Rect(x0, y0, x1, y1))
             highlighted += 1
@@ -306,6 +319,9 @@ def highlight_rows_in_pdf(
     highlighted = 0
     words_by_page: dict[int, list[tuple[float, float, float, float, str]]] = {}
 
+    highlighted += highlight_first_line_containing(document, ["QUANTITY"])
+    highlighted += highlight_first_line_containing(document, ["UL 94 Flame Class 94V0", "UL 94 Flame Class 94V-0", "94V0"])
+
     for term in cover_terms + standard_terms + extra_terms:
         clean_term = " ".join(str(term).split())
         if not clean_term or clean_term.upper() in {"NA", "OK"}:
@@ -371,12 +387,11 @@ def build_highlight_data(
 
     for row in cover_rows:
         if is_cover_quantity(row):
-            cover_terms.extend(split_highlight_values(row.get("Valeur page de garde", "")))
-            cover_terms.append("PCS")
+            continue
 
     for row in standard_rows:
         if is_ul94_standard(row):
-            standard_terms.extend(["UL 94 Flame Class 94V-0", "UL 94 Flame Class 94V0", "94V-0", "94V0"])
+            continue
 
     selected_rows: list[dict[str, str]] = []
     page_terms: list[tuple[str, str]] = []
