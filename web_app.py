@@ -117,6 +117,14 @@ def highlight_first_line_containing(document, terms: list[str]) -> int:
     return 0
 
 
+def highlight_first_value(document, term: str) -> int:
+    page, rect = find_first_rect(document, term)
+    if not page or not rect:
+        return 0
+    add_value_highlight(page, rect)
+    return 1
+
+
 def highlight_stackup_pages(document, page_numbers: set[str]) -> int:
     for index, page in enumerate(document):
         text = page.get_text("text").upper().replace(" ", "")
@@ -240,26 +248,21 @@ def is_ul94_standard(row: dict[str, str]) -> bool:
 
 def first_table_required(row: dict[str, str]) -> bool:
     text = row_text(row)
-    required_terms = [
-        "LAMINATE MATERIAL",
-        "CONDUCTOR WIDTH",
-        "CONDUCTOR SPACE",
-        "ANNULAR RING",
-        "COPPER THICKNESS - PTH",
-        "COPPER THICKNESS - VIAS FILLING",
-        "SOLDERABILITY TEST",
-        "ELECTRIC TEST",
-        "ADHESION - FINISH",
-        "ADHESION - SOLDER RESIST",
-        "WARP",
-        "SOLDER MASK THICKNESS",
-        "GOLD THICKNESS",
-        "NICKEL THICKNESS",
-        "INOIC CONTAMINATION",
-        "IONIC CONTAMINATION",
-        "AFTER FINISH",
-    ]
-    if any(term in text for term in required_terms):
+    test_name = str(row.get("TestName", "")).upper()
+
+    if re.search(r"\b(LAMINATE MATERIAL|CONDUCTOR WIDTH|CONDUCTOR SPACE|ANNULAR RING)\b", test_name):
+        return True
+    if "COPPER THICKNESS" in test_name and ("PTH" in test_name or "VIAS FILLING" in test_name):
+        return True
+    if re.search(r"\b(SOLDERABILITY TEST|ELECTRIC TEST|WARP)\b", test_name):
+        return True
+    if "ADHESION" in test_name and ("FINISH" in test_name or "SOLDER RESIST" in test_name):
+        return True
+    if re.search(r"\b(SOLDER MASK THICKNESS|GOLD THICKNESS|NICKEL THICKNESS)\b", test_name):
+        return True
+    if ("INOIC CONTAMINATION" in test_name or "IONIC CONTAMINATION" in test_name) and (
+        "1B2B1" in text or "AFTER FINISH" in text
+    ):
         return True
     return False
 
@@ -319,8 +322,11 @@ def highlight_rows_in_pdf(
     highlighted = 0
     words_by_page: dict[int, list[tuple[float, float, float, float, str]]] = {}
 
-    highlighted += highlight_first_line_containing(document, ["QUANTITY"])
-    highlighted += highlight_first_line_containing(document, ["UL 94 Flame Class 94V0", "UL 94 Flame Class 94V-0", "94V0"])
+    highlighted += highlight_first_value(document, "UL 94 Flame Class 94V0")
+    if not highlighted:
+        highlighted += highlight_first_value(document, "UL 94 Flame Class 94V-0")
+    if not highlighted:
+        highlighted += highlight_first_value(document, "94V0")
 
     for term in cover_terms + standard_terms + extra_terms:
         clean_term = " ".join(str(term).split())
@@ -386,8 +392,9 @@ def build_highlight_data(
     standard_terms: list[str] = []
 
     for row in cover_rows:
+        cover_terms.extend(tokenize_for_highlight(row.get("Valeur page de garde", "")))
         if is_cover_quantity(row):
-            continue
+            cover_terms.append("PCS")
 
     for row in standard_rows:
         if is_ul94_standard(row):
