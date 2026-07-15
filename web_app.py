@@ -264,6 +264,8 @@ def first_table_required(row: dict[str, str]) -> bool:
         "1B2B1" in text or "AFTER FINISH" in text
     ):
         return True
+    if "IMPEDANCE" in test_name and any(marker in text for marker in ["L10", "L3", "L2", "L13", "L1", "B2", "B1"]):
+        return True
     return False
 
 
@@ -328,7 +330,16 @@ def highlight_rows_in_pdf(
     if not highlighted:
         highlighted += highlight_first_value(document, "94V0")
 
-    for term in cover_terms + standard_terms + extra_terms:
+    for term in cover_terms:
+        clean_term = " ".join(str(term).split())
+        if not clean_term or clean_term.upper() in {"NA", "OK"}:
+            continue
+        page, rect = find_first_rect(document, clean_term)
+        if page and rect:
+            add_value_highlight(page, rect)
+            highlighted += 1
+
+    for term in standard_terms + extra_terms:
         clean_term = " ".join(str(term).split())
         if not clean_term or clean_term.upper() in {"NA", "OK"}:
             continue
