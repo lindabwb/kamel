@@ -234,15 +234,66 @@ def clean_row_candidates(row: dict[str, str]) -> list[str]:
     return cleaned
 
 
-def anchor_row_candidates(row: dict[str, str]) -> list[str]:
-    groups = [
-        tokenize_for_highlight(row.get("RESULTS", "")),
-        tokenize_for_highlight(row.get("SPEC", "")),
-        tokenize_for_highlight(row.get("TestName", "")),
-    ]
+def test_name_anchor_candidates(value: str) -> list[str]:
+    value = " ".join(str(value).split())
+    if not value:
+        return []
+
+    candidates: list[str] = [value]
+    chunks = [chunk.strip() for chunk in value.split(" - ") if chunk.strip()]
+    if len(chunks) > 1:
+        candidates.extend(chunks[1:])
+        candidates.append(chunks[0])
+
+    for candidate in list(candidates):
+        if " " in candidate:
+            candidates.extend(piece.strip() for piece in candidate.split(" ") if piece.strip())
+
+    weak_terms = {
+        "COPPER",
+        "THICKNESS",
+        "SOLDER",
+        "MASK",
+        "GOLD",
+        "NICKEL",
+        "TEST",
+        "ADHESION",
+        "CONTAMINATION",
+        "INOIC",
+        "IONIC",
+        "CONDUCTOR",
+    }
     cleaned: list[str] = []
-    for group in groups:
-        for candidate in sorted(group, key=len, reverse=True):
+    for candidate in candidates:
+        if candidate.upper() in weak_terms:
+            continue
+        if candidate not in cleaned:
+            cleaned.append(candidate)
+    return cleaned
+
+
+def anchor_row_candidates(row: dict[str, str]) -> list[str]:
+    test_name = str(row.get("TestName", ""))
+    compact_name = compact_text(test_name)
+    prefer_test_name_order = first_table_required(row) and compact_name != "IMPEDANCE"
+
+    if prefer_test_name_order:
+        groups = [
+            test_name_anchor_candidates(test_name),
+            tokenize_for_highlight(row.get("SPEC", "")),
+            tokenize_for_highlight(row.get("RESULTS", "")),
+        ]
+    else:
+        groups = [
+            tokenize_for_highlight(row.get("SPEC", "")),
+            tokenize_for_highlight(row.get("RESULTS", "")),
+            tokenize_for_highlight(test_name),
+        ]
+
+    cleaned: list[str] = []
+    for index, group in enumerate(groups):
+        ordered_group = group if prefer_test_name_order and index == 0 else sorted(group, key=len, reverse=True)
+        for candidate in ordered_group:
             candidate = " ".join(candidate.split())
             if not candidate or candidate.upper() in {"NA", "OK"}:
                 continue
