@@ -234,8 +234,31 @@ def clean_row_candidates(row: dict[str, str]) -> list[str]:
     return cleaned
 
 
+def anchor_row_candidates(row: dict[str, str]) -> list[str]:
+    groups = [
+        tokenize_for_highlight(row.get("RESULTS", "")),
+        tokenize_for_highlight(row.get("SPEC", "")),
+        tokenize_for_highlight(row.get("TestName", "")),
+    ]
+    cleaned: list[str] = []
+    for group in groups:
+        for candidate in sorted(group, key=len, reverse=True):
+            candidate = " ".join(candidate.split())
+            if not candidate or candidate.upper() in {"NA", "OK"}:
+                continue
+            if len(candidate) <= 2 and not re.fullmatch(r"[A-Z]\d+", candidate.upper()):
+                continue
+            if candidate not in cleaned:
+                cleaned.append(candidate)
+    return cleaned
+
+
 def row_text(row: dict[str, str]) -> str:
     return " ".join(str(row.get(key, "")) for key in ("TestName", "SPEC", "RESULTS")).upper()
+
+
+def compact_text(value: str) -> str:
+    return re.sub(r"[^A-Z0-9]+", "", str(value).upper())
 
 
 def is_cover_quantity(row: dict[str, str]) -> bool:
@@ -249,22 +272,34 @@ def is_ul94_standard(row: dict[str, str]) -> bool:
 def first_table_required(row: dict[str, str]) -> bool:
     text = row_text(row)
     test_name = str(row.get("TestName", "")).upper()
+    compact_name = compact_text(test_name)
 
-    if re.search(r"\b(LAMINATE MATERIAL|CONDUCTOR WIDTH|CONDUCTOR SPACE|ANNULAR RING)\b", test_name):
+    exact_tests = {
+        "LAMINATEMATERIAL",
+        "CONDUCTORWIDTH",
+        "CONDUCTORSPACE",
+        "ANNULARRING",
+        "SOLDERABILITYTEST",
+        "SOLDERMASKTHICKNESS",
+        "GOLDTHICKNESS",
+        "NICKELTHICKNESS",
+    }
+
+    if compact_name in exact_tests:
         return True
-    if "COPPER THICKNESS" in test_name and ("PTH" in test_name or "VIAS FILLING" in test_name):
+    if compact_name.startswith("COPPERTHICKNESS") and ("PTH" in compact_name or "VIASFILLING" in compact_name):
         return True
-    if re.search(r"\b(SOLDERABILITY TEST|ELECTRIC TEST|WARP)\b", test_name):
+    if compact_name.startswith("ELECTRICTEST"):
         return True
-    if "ADHESION" in test_name and ("FINISH" in test_name or "SOLDER RESIST" in test_name):
+    if compact_name.startswith("ADHESION") and ("FINISH" in compact_name or "SOLDERRESIST" in compact_name):
         return True
-    if re.search(r"\b(SOLDER MASK THICKNESS|GOLD THICKNESS|NICKEL THICKNESS)\b", test_name):
+    if compact_name.startswith("WARPTWIST"):
         return True
-    if ("INOIC CONTAMINATION" in test_name or "IONIC CONTAMINATION" in test_name) and (
-        "1B2B1" in text or "AFTER FINISH" in text
+    if (compact_name.startswith("INOICCONTAMINATION") or compact_name.startswith("IONICCONTAMINATION")) and (
+        "AFTERFINISH" in compact_name or "1B2B1" in compact_name
     ):
         return True
-    if "IMPEDANCE" in test_name and any(marker in text for marker in ["L10", "L3", "L2", "L13", "L1", "B2", "B1"]):
+    if compact_name == "IMPEDANCE" and re.search(r"\b(L10|L3|L2|L13|L1|B2|B1)\b", text):
         return True
     return False
 
@@ -370,7 +405,7 @@ def highlight_rows_in_pdf(
         words = words_by_page.setdefault(page_index, page_words(page))
 
         anchor_rect = None
-        for candidate in sorted([c for c in candidates if c.upper() != "OK"], key=len, reverse=True):
+        for candidate in anchor_row_candidates(row):
             rects = find_rects_on_page(page, candidate)
             if rects:
                 anchor_rect = rects[0]
@@ -425,13 +460,6 @@ def build_highlight_data(
     for row in inspection_rows:
         if first_table_required(row):
             add_row(row, require_conformity=True)
-        if row_contains(row, "COPPER THICKNESS - PTH") and row.get("Conformite") == "CONFORME":
-            page_terms.append(("PTH", row.get("Page", "")))
-        if row_contains(row, "VIAS FILLING") and row.get("Conformite") == "CONFORME":
-            page_terms.append(("Vias filling", row.get("Page", "")))
-        if row_contains(row, "AFTER FINISH") and row.get("Conformite") == "CONFORME":
-            page_terms.append(("AFTER FINISH", row.get("Page", "")))
-
     hole_rows = [row for row in inspection_rows if is_hole_size_row(row) and row.get("Conformite") == "CONFORME"]
     if hole_rows:
         add_row(random.choice(hole_rows), require_conformity=True)
