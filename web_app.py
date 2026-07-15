@@ -106,6 +106,38 @@ def highlight_text_line(page, anchor_rect, words: list[tuple[float, float, float
     return highlighted
 
 
+def highlight_stackup_pages(document, page_numbers: set[str]) -> int:
+    if not page_numbers:
+        for index, page in enumerate(document):
+            if page.search_for("STACKUP") or page.search_for("STACK UP") or page.search_for("STACK-UP"):
+                page_numbers.add(str(index + 1))
+
+    highlighted = 0
+    for page_number in page_numbers:
+        if not str(page_number).isdigit():
+            continue
+        page_index = int(page_number) - 1
+        if not 0 <= page_index < len(document):
+            continue
+        page = document[page_index]
+        started = False
+        for x0, y0, x1, y1, text in page_words(page):
+            clean = text.strip()
+            if not clean:
+                continue
+            if "STACK" in clean.upper():
+                started = True
+                if clean.upper() in {"STACKUP", "STACK-UP", "STACK"}:
+                    continue
+            if not started:
+                continue
+            if y0 < 90 or y0 > page.rect.height - 40:
+                continue
+            add_value_highlight(page, fitz.Rect(x0, y0, x1, y1))
+            highlighted += 1
+    return highlighted
+
+
 def search_variants(term: str) -> list[str]:
     variants = [
         term,
@@ -114,7 +146,7 @@ def search_variants(term: str) -> list[str]:
         term.replace(" / ", "/"),
     ]
     if term.upper() == "UL 94V-0":
-        variants.extend(["94V-0", "UL 94 Flame Class 94V-0"])
+        variants.extend(["94V-0", "94V0", "UL 94 Flame Class 94V-0", "UL 94 Flame Class 94V0"])
     if term.upper() == "ROHS DIRECTIVE":
         variants.extend(["RoHS", "RoHS Directive"])
     return list(dict.fromkeys([variant for variant in variants if variant]))
@@ -135,6 +167,25 @@ def find_first_rect(document, term: str, page_number: str | None = None):
             if rects:
                 return page, rects[0]
     return None, None
+
+
+def find_all_rects(document, term: str, page_number: str | None = None) -> list[tuple[int, fitz.Rect]]:
+    page_indexes: list[int] = []
+    if page_number and str(page_number).isdigit():
+        index = int(page_number) - 1
+        if 0 <= index < len(document):
+            page_indexes.append(index)
+    page_indexes.extend(index for index in range(len(document)) if index not in page_indexes)
+
+    matches: list[tuple[int, fitz.Rect]] = []
+    for index in page_indexes:
+        page = document[index]
+        for variant in search_variants(term):
+            rects = page.search_for(variant)
+            if rects:
+                matches.extend((index, rect) for rect in rects)
+                break
+    return matches
 
 
 def find_rects_on_page(page, term: str) -> list[fitz.Rect]:
@@ -249,6 +300,7 @@ def highlight_rows_in_pdf(
     selected_rows: list[dict[str, str]],
     extra_terms: list[str],
     page_terms: list[tuple[str, str]],
+    stackup_pages: set[str],
 ) -> int:
     document = fitz.open(source_pdf)
     highlighted = 0
@@ -258,9 +310,9 @@ def highlight_rows_in_pdf(
         clean_term = " ".join(str(term).split())
         if not clean_term or clean_term.upper() in {"NA", "OK"}:
             continue
-        page, rect = find_first_rect(document, clean_term)
-        if page and rect:
-            add_value_highlight(page, rect)
+        matches = find_all_rects(document, clean_term)
+        for page_index, rect in matches[:3]:
+            add_value_highlight(document[page_index], rect)
             highlighted += 1
 
     for term, page_number in page_terms:
@@ -270,6 +322,8 @@ def highlight_rows_in_pdf(
             highlighted += 1
 
     for row in selected_rows:
+        if is_stackup_row(row):
+            continue
         candidates = clean_row_candidates(row)
         if is_stackup_row(row):
             candidates = [candidate for candidate in candidates if len(candidate) > 1]
@@ -298,6 +352,8 @@ def highlight_rows_in_pdf(
             add_value_highlight(page, anchor_rect)
             highlighted += 1
 
+    highlighted += highlight_stackup_pages(document, stackup_pages)
+
     output_pdf.parent.mkdir(parents=True, exist_ok=True)
     document.save(output_pdf, garbage=1, deflate=False)
     document.close()
@@ -309,20 +365,22 @@ def build_highlight_data(
     standard_rows: list[dict[str, str]],
     inspection_rows: list[dict[str, str]],
     sample_size: int = 0,
-) -> tuple[list[str], list[str], list[dict[str, str]], list[str], list[tuple[str, str]]]:
+) -> tuple[list[str], list[str], list[dict[str, str]], list[str], list[tuple[str, str]], set[str]]:
     cover_terms: list[str] = []
     standard_terms: list[str] = []
 
     for row in cover_rows:
         if is_cover_quantity(row):
             cover_terms.extend(split_highlight_values(row.get("Valeur page de garde", "")))
+            cover_terms.append("PCS")
 
     for row in standard_rows:
         if is_ul94_standard(row):
-            standard_terms.extend(["UL 94 Flame Class 94V-0", "94V-0"])
+            standard_terms.extend(["UL 94 Flame Class 94V-0", "UL 94 Flame Class 94V0", "94V-0", "94V0"])
 
     selected_rows: list[dict[str, str]] = []
     page_terms: list[tuple[str, str]] = []
+    stackup_pages: set[str] = set()
 
     def add_row(row: dict[str, str], require_conformity: bool = True) -> None:
         if require_conformity and row.get("Conformite") != "CONFORME":
@@ -352,10 +410,11 @@ def build_highlight_data(
     for row in inspection_rows:
         if is_stackup_row(row):
             add_row(row, require_conformity=False)
+            stackup_pages.add(str(row.get("Page", "")))
 
     extra_terms = ["HOLE WALL COPPER THICKNESS"]
 
-    return cover_terms, standard_terms, selected_rows, extra_terms, page_terms
+    return cover_terms, standard_terms, selected_rows, extra_terms, page_terms, stackup_pages
 
 
 @app.route("/", methods=["GET"])
@@ -393,7 +452,7 @@ def process():
 
         try:
             report = extract_pdf_report(pdf_path, display_name=original_name)
-            cover_terms, standard_terms, selected_rows, extra_terms, page_terms = build_highlight_data(
+            cover_terms, standard_terms, selected_rows, extra_terms, page_terms, stackup_pages = build_highlight_data(
                 report.cover_rows,
                 report.standard_rows,
                 report.inspection_rows,
@@ -407,6 +466,7 @@ def process():
                 selected_rows,
                 extra_terms,
                 page_terms,
+                stackup_pages,
             )
             highlighted_paths.append(highlighted_pdf_path)
             sampled_total += len(selected_rows)
