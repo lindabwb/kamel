@@ -81,55 +81,71 @@ def add_highlight_rect(page, rect, color=(1, 0.86, 0.18)) -> None:
     annot.update()
 
 
-def page_words(page) -> list[tuple[float, float, float, float, str]]:
-    """Récupère tous les mots d'une page."""
-    return [
-        (float(word[0]), float(word[1]), float(word[2]), float(word[3]), str(word[4]))
-        for word in page.get_text("words")
-    ]
+def get_page_blocks(page) -> list[dict]:
+    """Récupère les blocs de texte d'une page avec leur structure."""
+    return page.get_text("dict")["blocks"]
 
 
-def get_line_from_rect(page, rect, tolerance: float = 5.0) -> list[tuple[float, float, float, float, str]]:
-    """Récupère tous les mots sur la même ligne qu'un rectangle."""
-    anchor_mid = (rect.y0 + rect.y1) / 2
-    words = page_words(page)
-    return [
-        (x0, y0, x1, y1, text)
-        for x0, y0, x1, y1, text in words
-        if abs(((y0 + y1) / 2) - anchor_mid) <= tolerance
-    ]
+def get_text_lines_from_page(page) -> list[tuple[float, str, list[tuple[float, float, float, float, str]]]]:
+    """
+    Extrait les lignes de texte d'une page avec leurs coordonnées.
+    Retourne: [(y_position, texte_complet, [(x0, y0, x1, y1, mot), ...])]
+    """
+    blocks = get_page_blocks(page)
+    lines: dict[float, list[tuple[float, float, float, float, str]]] = {}
+    
+    for block in blocks:
+        if "lines" not in block:
+            continue
+        for line in block["lines"]:
+            if "spans" not in line:
+                continue
+            for span in line["spans"]:
+                text = span["text"].strip()
+                if not text:
+                    continue
+                x0, y0, x1, y1 = span["bbox"]
+                mid_y = (y0 + y1) / 2
+                # Grouper par ligne approximative
+                key = round(mid_y / 2) * 2
+                if key not in lines:
+                    lines[key] = []
+                lines[key].append((x0, y0, x1, y1, text))
+    
+    # Trier par position Y et construire les lignes
+    result = []
+    for y_key in sorted(lines.keys()):
+        words = sorted(lines[y_key], key=lambda w: w[0])  # Trier par X
+        text = " ".join(w[4] for w in words)
+        avg_y = sum((w[1] + w[3]) / 2 for w in words) / len(words)
+        result.append((avg_y, text, words))
+    
+    return result
 
 
-def highlight_line(page, rect) -> int:
-    """Surligne toute la ligne contenant le rectangle."""
-    line_words = get_line_from_rect(page, rect)
-    highlighted = 0
-    for x0, y0, x1, y1, text in line_words:
-        if text.strip():
-            add_highlight_rect(page, fitz.Rect(x0, y0, x1, y1))
-            highlighted += 1
-    return highlighted
-
-
-def find_first_rect(document, term: str) -> tuple[fitz.Page | None, fitz.Rect | None]:
-    """Trouve le premier rectangle contenant le terme recherché."""
-    for page in document:
-        rects = page.search_for(term)
-        if rects:
-            return page, rects[0]
-    return None, None
-
-
-def search_variants(term: str) -> list[str]:
-    """Génère des variantes d'un terme pour la recherche."""
-    variants = [
-        term,
-        term.replace(" ", ""),
-        term.replace(" / ", "/"),
-    ]
-    if "94V0" in term.upper() or "94V-0" in term.upper():
-        variants.extend(["94V0", "94V-0", "UL 94 Flame Class 94V0", "UL 94 Flame Class 94V-0"])
-    return list(dict.fromkeys(v for v in variants if v))
+def find_item_lines(lines: list[tuple[float, str, list]], target_items: list[int]) -> dict[int, list[tuple[float, float, float, float, str]]]:
+    """
+    Trouve les lignes correspondant aux numéros d'items.
+    """
+    item_lines = {}
+    
+    for y_pos, text, words in lines:
+        # Vérifier si la ligne commence par un numéro d'item
+        match = re.match(r"^(\d+)", text.strip())
+        if match:
+            item_num = int(match.group(1))
+            if item_num in target_items:
+                item_lines[item_num] = words
+                # Pour l'item 8, on cherche aussi les sous-lignes
+                if item_num == 8:
+                    # Chercher les lignes suivantes qui contiennent PTH, BVH, IVH, Vias
+                    pass
+        # Pour l'item 8, on cherche aussi les sous-lignes sur la même zone
+        if "8" in text and ("PTH" in text or "BVH" in text or "IVH" in text or "Vias" in text):
+            if 8 not in item_lines:
+                item_lines[8] = words
+    
+    return item_lines
 
 
 def highlight_cover_page(document, cover_terms: list[str]) -> int:
@@ -138,10 +154,12 @@ def highlight_cover_page(document, cover_terms: list[str]) -> int:
     for term in cover_terms:
         if not term or term.upper() in {"NA", "OK"}:
             continue
-        for variant in search_variants(term):
-            page, rect = find_first_rect(document, variant)
-            if page and rect:
-                highlighted += highlight_line(page, rect)
+        for page in document:
+            rects = page.search_for(term)
+            if rects:
+                for rect in rects:
+                    add_highlight_rect(page, rect)
+                    highlighted += 1
                 break
     return highlighted
 
@@ -149,11 +167,13 @@ def highlight_cover_page(document, cover_terms: list[str]) -> int:
 def highlight_ul94(document) -> int:
     """Surligne UL 94 Flame Class 94V-0."""
     terms = ["UL 94 Flame Class 94V0", "UL 94 Flame Class 94V-0", "94V0", "94V-0"]
-    for term in terms:
-        page, rect = find_first_rect(document, term)
-        if page and rect:
-            add_highlight_rect(page, rect)
-            return 1
+    for page in document:
+        for term in terms:
+            rects = page.search_for(term)
+            if rects:
+                for rect in rects:
+                    add_highlight_rect(page, rect)
+                return 1
     return 0
 
 
@@ -172,93 +192,71 @@ def highlight_inspection_report(document) -> int:
     if not inspection_page:
         return 0
 
-    # Récupérer TOUT le texte de la page avec les coordonnées
-    words = page_words(inspection_page)
-    
-    # Trouver les items par leur numéro
-    # On cherche d'abord tous les numéros d'items (1, 2, 3, ...)
-    item_positions = {}
-    for x0, y0, x1, y1, text in words:
-        text_clean = text.strip()
-        # Si c'est un nombre (item number)
-        if text_clean.isdigit() and len(text_clean) <= 2:
-            num = int(text_clean)
-            if num not in item_positions:
-                item_positions[num] = (y0, y1)
+    # Récupérer les lignes de la page
+    lines = get_text_lines_from_page(inspection_page)
     
     # Items à surligner
     target_items = [1, 4, 5, 6, 8, 12, 13, 14, 18, 20, 21, 22, 23, 24]
     
-    # Pour chaque item cible, trouver la ligne correspondante
-    for item_num in target_items:
-        if item_num not in item_positions:
-            continue
-        
-        y0, y1 = item_positions[item_num]
-        mid_y = (y0 + y1) / 2
-        
-        # Récupérer tous les mots sur cette ligne
-        line_words = []
-        for x0, y0_w, x1, y1_w, text in words:
-            word_mid = (y0_w + y1_w) / 2
-            if abs(word_mid - mid_y) <= 5.0:
-                line_words.append((x0, y0_w, x1, y1_w, text))
-        
-        # Surligner la ligne
-        for x0, y0_w, x1, y1_w, text in line_words:
-            if text.strip():
-                add_highlight_rect(inspection_page, fitz.Rect(x0, y0_w, x1, y1_w))
-                highlighted += 1
+    # Pour chaque ligne, vérifier si elle commence par un item cible
+    for y_pos, text, words in lines:
+        text_clean = text.strip()
+        # Vérifier si la ligne commence par un numéro d'item
+        match = re.match(r"^(\d+)", text_clean)
+        if match:
+            item_num = int(match.group(1))
+            if item_num in target_items:
+                # Surligner toute la ligne
+                for x0, y0, x1, y1, word in words:
+                    if word.strip():
+                        add_highlight_rect(inspection_page, fitz.Rect(x0, y0, x1, y1))
+                        highlighted += 1
     
-    # Cas spécial pour item 8: on veut PTH et Vias filling, pas BVH, IVH
-    # On va chercher les lignes qui contiennent "PTH" ou "Vias" sur la ligne de l'item 8
-    if 8 in item_positions:
-        y0, y1 = item_positions[8]
-        mid_y = (y0 + y1) / 2
-        # Chercher les sous-lignes de l'item 8
-        for x0, y0_w, x1, y1_w, text in words:
-            word_mid = (y0_w + y1_w) / 2
-            if abs(word_mid - mid_y) <= 15.0:  # Dans la zone de l'item 8
-                text_upper = text.upper()
-                # Surligner PTH et Vias filling, pas BVH, IVH
-                if "PTH" in text_upper and "BVH" not in text_upper and "IVH" not in text_upper:
-                    add_highlight_rect(inspection_page, fitz.Rect(x0, y0_w, x1, y1_w))
+    # Cas spéciaux pour les sous-lignes (PTH, BVH, IVH, Vias filling)
+    # On parcourt toutes les lignes pour trouver celles qui contiennent ces mots
+    for y_pos, text, words in lines:
+        text_upper = text.upper()
+        # Pour l'item 8: PTH (pas BVH, IVH) et Vias filling
+        if "PTH" in text_upper and "BVH" not in text_upper and "IVH" not in text_upper:
+            for x0, y0, x1, y1, word in words:
+                if word.strip():
+                    add_highlight_rect(inspection_page, fitz.Rect(x0, y0, x1, y1))
                     highlighted += 1
-                if "VIAS" in text_upper or "FILLING" in text_upper:
-                    add_highlight_rect(inspection_page, fitz.Rect(x0, y0_w, x1, y1_w))
+        if "VIAS" in text_upper and "FILLING" in text_upper:
+            for x0, y0, x1, y1, word in words:
+                if word.strip():
+                    add_highlight_rect(inspection_page, fitz.Rect(x0, y0, x1, y1))
                     highlighted += 1
-    
-    # Cas spécial pour item 14: Finish et Solder resist
-    if 14 in item_positions:
-        y0, y1 = item_positions[14]
-        mid_y = (y0 + y1) / 2
-        for x0, y0_w, x1, y1_w, text in words:
-            word_mid = (y0_w + y1_w) / 2
-            if abs(word_mid - mid_y) <= 15.0:
-                text_upper = text.upper()
-                if "FINISH" in text_upper:
-                    add_highlight_rect(inspection_page, fitz.Rect(x0, y0_w, x1, y1_w))
+        
+        # Pour l'item 14: Finish et Solder resist
+        if "FINISH" in text_upper and "ADHESION" in text_upper:
+            for x0, y0, x1, y1, word in words:
+                if word.strip():
+                    add_highlight_rect(inspection_page, fitz.Rect(x0, y0, x1, y1))
                     highlighted += 1
-                if "SOLDER" in text_upper and "RESIST" in text_upper:
-                    add_highlight_rect(inspection_page, fitz.Rect(x0, y0_w, x1, y1_w))
+        if "SOLDER" in text_upper and "RESIST" in text_upper and "ADHESION" in text_upper:
+            for x0, y0, x1, y1, word in words:
+                if word.strip():
+                    add_highlight_rect(inspection_page, fitz.Rect(x0, y0, x1, y1))
                     highlighted += 1
-    
-    # Cas spécial pour item 23: IONIC CONTAMINATION
-    if 23 in item_positions:
-        y0, y1 = item_positions[23]
-        mid_y = (y0 + y1) / 2
-        for x0, y0_w, x1, y1_w, text in words:
-            word_mid = (y0_w + y1_w) / 2
-            if abs(word_mid - mid_y) <= 20.0:
-                text_upper = text.upper()
-                if "10321310" in text_upper or "1B2B1" in text_upper:
-                    add_highlight_rect(inspection_page, fitz.Rect(x0, y0_w, x1, y1_w))
+        
+        # Pour l'item 23: IONIC CONTAMINATION
+        if "10321310" in text or "1B2B1" in text:
+            for x0, y0, x1, y1, word in words:
+                if word.strip():
+                    add_highlight_rect(inspection_page, fitz.Rect(x0, y0, x1, y1))
                     highlighted += 1
-                if "AFTER" in text_upper and "FINISH" in text_upper:
-                    add_highlight_rect(inspection_page, fitz.Rect(x0, y0_w, x1, y1_w))
+        if "AFTER" in text_upper and "FINISH" in text_upper and ("IONIC" in text_upper or "INOIC" in text_upper):
+            for x0, y0, x1, y1, word in words:
+                if word.strip():
+                    add_highlight_rect(inspection_page, fitz.Rect(x0, y0, x1, y1))
                     highlighted += 1
-                if "INOIC" in text_upper or "IONIC" in text_upper or "CONTAMINATION" in text_upper:
-                    add_highlight_rect(inspection_page, fitz.Rect(x0, y0_w, x1, y1_w))
+        
+        # Pour l'item 24: IMPEDANCE
+        if "IMPEDANCE" in text_upper:
+            for x0, y0, x1, y1, word in words:
+                if word.strip():
+                    add_highlight_rect(inspection_page, fitz.Rect(x0, y0, x1, y1))
                     highlighted += 1
     
     return highlighted
@@ -273,25 +271,20 @@ def highlight_hole_size(document) -> int:
         if "HOLE SIZE" not in text and "DRW. DIMENSION" not in text:
             continue
 
-        words = page_words(page)
-        candidate_lines: list[list[tuple[float, float, float, float, str]]] = []
-        used_y: set[float] = set()
-
-        for i, (x0, y0, x1, y1, text) in enumerate(words):
-            if re.match(r"^[A-Z]\s*$", text.strip()) and i + 1 < len(words):
-                next_text = words[i + 1][4]
-                if re.search(r"\d", next_text):
-                    mid = (y0 + y1) / 2
-                    if mid not in used_y:
-                        line_words = get_line_from_rect(page, fitz.Rect(x0, y0, x1, y1))
-                        if line_words:
-                            candidate_lines.append(line_words)
-                            used_y.add(mid)
-
+        lines = get_text_lines_from_page(page)
+        candidate_lines = []
+        
+        for y_pos, line_text, words in lines:
+            # Chercher une ligne qui a une lettre majuscule suivie de chiffres
+            if re.search(r"^[A-Z]\s+\d", line_text):
+                candidate_lines.append(words)
+            elif re.search(r"^[A-Z]\s+[0-9.]+", line_text):
+                candidate_lines.append(words)
+        
         if candidate_lines:
             selected = random.choice(candidate_lines)
-            for x0, y0, x1, y1, text in selected:
-                if text.strip():
+            for x0, y0, x1, y1, word in selected:
+                if word.strip():
                     add_highlight_rect(page, fitz.Rect(x0, y0, x1, y1))
             return 1
 
@@ -305,30 +298,26 @@ def highlight_dimension_table(document) -> int:
         if "DRW. DIMENSION" not in text and "RESULTS" not in text:
             continue
 
-        words = page_words(page)
+        lines = get_text_lines_from_page(page)
         best_line = None
         best_value = -1.0
 
-        for i, (x0, y0, x1, y1, text) in enumerate(words):
-            if "±" in text or "+/-" in text:
-                match = re.search(r"(\d+[.,]\d+)", text)
+        for y_pos, line_text, words in lines:
+            # Chercher une ligne avec ITEM et ±
+            if "ITEM" in line_text and ("±" in line_text or "+/-" in line_text):
+                match = re.search(r"(\d+[.,]\d+)", line_text)
                 if match:
                     try:
                         value = float(match.group(1).replace(",", "."))
                         if value > best_value:
-                            rect = fitz.Rect(x0, y0, x1, y1)
-                            line_words = get_line_from_rect(page, rect)
-                            if line_words:
-                                line_text = " ".join(t for _, _, _, _, t in line_words)
-                                if "ITEM" in line_text or re.search(r"\d+\s*[±]", line_text):
-                                    best_line = line_words
-                                    best_value = value
+                            best_line = words
+                            best_value = value
                     except ValueError:
                         continue
 
         if best_line:
-            for x0, y0, x1, y1, text in best_line:
-                if text.strip():
+            for x0, y0, x1, y1, word in best_line:
+                if word.strip():
                     add_highlight_rect(page, fitz.Rect(x0, y0, x1, y1))
             return 1
 
@@ -344,11 +333,15 @@ def highlight_xsection(document) -> int:
             if not rects:
                 rects = page.search_for("HOLE WALL")
             if rects:
-                add_highlight_rect(page, rects[0])
-                line_words = get_line_from_rect(page, rects[0])
-                for x0, y0, x1, y1, t in line_words:
-                    if re.search(r"\d+[.,]\d+\s*mil", t) or re.search(r"\d+[.,]\d+", t):
-                        add_highlight_rect(page, fitz.Rect(x0, y0, x1, y1))
+                for rect in rects:
+                    add_highlight_rect(page, rect)
+                # Surligner aussi la valeur
+                lines = get_text_lines_from_page(page)
+                for y_pos, line_text, words in lines:
+                    if "HOLE" in line_text and "WALL" in line_text:
+                        for x0, y0, x1, y1, word in words:
+                            if re.search(r"\d+[.,]\d+", word):
+                                add_highlight_rect(page, fitz.Rect(x0, y0, x1, y1))
                 return 1
     return 0
 
@@ -362,25 +355,19 @@ def highlight_stackup(document) -> int:
         if "STACKUP" not in text.upper():
             continue
 
-        words = page_words(page)
-        stackup_start_y = None
-
-        for x0, y0, x1, y1, word in words:
-            if word.strip().upper() == "STACKUP":
-                stackup_start_y = y0
-                break
-
-        if stackup_start_y is None:
-            continue
-
-        for x0, y0, x1, y1, word in words:
-            if y0 < stackup_start_y:
+        lines = get_text_lines_from_page(page)
+        found_stackup = False
+        
+        for y_pos, line_text, words in lines:
+            if "STACKUP" in line_text.upper():
+                found_stackup = True
                 continue
-            if y0 > page.rect.height - 50:
-                continue
-            if word.strip():
-                add_highlight_rect(page, fitz.Rect(x0, y0, x1, y1))
-                highlighted += 1
+            if found_stackup:
+                # Surligner toutes les lignes après STACKUP
+                for x0, y0, x1, y1, word in words:
+                    if word.strip():
+                        add_highlight_rect(page, fitz.Rect(x0, y0, x1, y1))
+                        highlighted += 1
 
     return highlighted
 
