@@ -111,9 +111,12 @@ def highlight_ul94(document) -> int:
     return 0
 
 
-def extract_all_inspection_data(pdf_path: Path) -> list[dict]:
-    """Extrait les données du tableau INSPECTION REPORT sur toutes les pages."""
-    all_rows = []
+def get_inspection_items_with_coordinates(pdf_path: Path) -> dict:
+    """
+    Extrait les items du tableau INSPECTION REPORT avec leurs coordonnées précises.
+    Retourne: {item_num: {"page": page_num, "y0": y0, "y1": y1, "text": text}}
+    """
+    items = {}
     
     with pdfplumber.open(pdf_path) as pdf:
         for page_num, page in enumerate(pdf.pages):
@@ -121,167 +124,113 @@ def extract_all_inspection_data(pdf_path: Path) -> list[dict]:
             if "INSPECTION REPORT" not in text:
                 continue
             
-            # Essayer d'extraire les tableaux
-            for settings in [
-                {"vertical_strategy": "lines", "horizontal_strategy": "lines"},
-                {"vertical_strategy": "text", "horizontal_strategy": "text"},
-            ]:
-                try:
-                    tables = page.extract_tables(table_settings=settings)
-                    for table in tables:
-                        if not table or len(table) < 2:
-                            continue
-                        
-                        # Chercher l'en-tête
-                        header_row = None
-                        for i, row in enumerate(table):
-                            if row and any(cell and "SPEC" in str(cell).upper() for cell in row):
-                                header_row = i
-                                break
-                        
-                        if header_row is None:
-                            continue
-                        
-                        # Trouver les colonnes
-                        spec_col = None
-                        results_col = None
-                        description_col = None
-                        
-                        for i, cell in enumerate(table[header_row]):
-                            if cell:
-                                cell_str = str(cell).upper()
-                                if "SPEC" in cell_str:
-                                    spec_col = i
-                                elif "RESULT" in cell_str:
-                                    results_col = i
-                                elif "DESCRIPTION" in cell_str or "ITEM" in cell_str:
-                                    description_col = i
-                        
-                        if spec_col is None or results_col is None:
-                            continue
-                        
-                        # Extraire les données
-                        for row_idx, row in enumerate(table[header_row + 1:], start=header_row + 1):
-                            if not row or len(row) <= max(spec_col, results_col):
-                                continue
-                            
-                            test_name = str(row[description_col]).strip() if description_col is not None and description_col < len(row) else ""
-                            spec = str(row[spec_col]).strip() if spec_col < len(row) else ""
-                            results = str(row[results_col]).strip() if results_col < len(row) else ""
-                            
-                            # Nettoyer
-                            test_name = re.sub(r'\s+', ' ', test_name).strip()
-                            spec = re.sub(r'\s+', ' ', spec).strip()
-                            results = re.sub(r'\s+', ' ', results).strip()
-                            
-                            if test_name and test_name.upper() not in ["", "NA", "NONE", "ITEM"]:
-                                all_rows.append({
-                                    "page": page_num + 1,
-                                    "test_name": test_name,
-                                    "spec": spec,
-                                    "results": results,
-                                    "row_idx": row_idx,
-                                    "table_row": row,
-                                })
-                    if all_rows:
-                        break
-                except Exception:
-                    continue
+            # Extraire les mots avec leurs coordonnées
+            words = page.extract_words(use_text_flow=False, keep_blank_chars=False)
+            
+            # Grouper les mots par ligne
+            lines = {}
+            for word in words:
+                mid_y = (word["top"] + word["bottom"]) / 2
+                key = round(mid_y / 2) * 2
+                if key not in lines:
+                    lines[key] = []
+                lines[key].append(word)
+            
+            # Trier les lignes
+            sorted_keys = sorted(lines.keys())
+            
+            # Pour chaque ligne, vérifier si elle commence par un numéro d'item
+            for y_key in sorted_keys:
+                line_words = sorted(lines[y_key], key=lambda w: w["x0"])
+                line_text = " ".join(w["text"] for w in line_words)
+                line_text_clean = re.sub(r'\s+', ' ', line_text).strip()
+                
+                # Vérifier si la ligne commence par un numéro
+                match = re.match(r"^(\d+)", line_text_clean)
+                if match:
+                    item_num = int(match.group(1))
+                    items[item_num] = {
+                        "page": page_num,
+                        "y0": min(w["top"] for w in line_words),
+                        "y1": max(w["bottom"] for w in line_words),
+                        "text": line_text_clean,
+                        "words": line_words
+                    }
+                
+                # Cas spécial: item 8 avec ses sous-lignes (PTH, BVH, IVH, Vias)
+                if "8" in line_text_clean and ("PTH" in line_text_clean or "BVH" in line_text_clean or "IVH" in line_text_clean or "Vias" in line_text_clean):
+                    if 8 not in items:
+                        items[8] = {
+                            "page": page_num,
+                            "y0": min(w["top"] for w in line_words),
+                            "y1": max(w["bottom"] for w in line_words),
+                            "text": line_text_clean,
+                            "words": line_words
+                        }
+                    else:
+                        # Étendre la zone de l'item 8
+                        items[8]["y0"] = min(items[8]["y0"], min(w["top"] for w in line_words))
+                        items[8]["y1"] = max(items[8]["y1"], max(w["bottom"] for w in line_words))
+                        items[8]["text"] += " " + line_text_clean
+                        items[8]["words"].extend(line_words)
+                
+                # Cas spécial: item 23 avec ses sous-lignes
+                if "23" in line_text_clean and ("10321310" in line_text_clean or "AFTER" in line_text_clean or "INOIC" in line_text_clean):
+                    if 23 not in items:
+                        items[23] = {
+                            "page": page_num,
+                            "y0": min(w["top"] for w in line_words),
+                            "y1": max(w["bottom"] for w in line_words),
+                            "text": line_text_clean,
+                            "words": line_words
+                        }
+                    else:
+                        items[23]["y0"] = min(items[23]["y0"], min(w["top"] for w in line_words))
+                        items[23]["y1"] = max(items[23]["y1"], max(w["bottom"] for w in line_words))
+                        items[23]["text"] += " " + line_text_clean
+                        items[23]["words"].extend(line_words)
     
-    return all_rows
+    return items
 
 
-def highlight_inspection_report_with_pdfplumber(document: fitz.Document, pdf_path: Path) -> int:
-    """Utilise pdfplumber pour extraire les données puis surligne avec fitz."""
+def highlight_inspection_report_with_coordinates(document: fitz.Document, pdf_path: Path) -> int:
+    """Utilise les coordonnées extraites par pdfplumber pour surligner."""
     highlighted = 0
     
-    # Extraire les données du tableau
-    all_rows = extract_all_inspection_data(pdf_path)
+    # Extraire les items avec leurs coordonnées
+    items = get_inspection_items_with_coordinates(pdf_path)
     
-    if not all_rows:
+    if not items:
         return 0
     
-    # Items à surligner avec leurs mots-clés
-    target_patterns = [
-        # Item 1
-        (["LAMINATE", "MATERIAL"], "LAMINATE MATERIAL"),
-        # Item 4
-        (["CONDUCTOR", "WIDTH"], "CONDUCTOR WIDTH"),
-        # Item 5
-        (["CONDUCTOR", "SPACE"], "CONDUCTOR SPACE"),
-        # Item 6
-        (["ANNULAR", "RING"], "ANNULAR RING"),
-        # Item 8 - PTH (pas BVH, IVH)
-        (["COPPER", "THICKNESS", "PTH"], "COPPER THICKNESS PTH"),
-        (["COPPER", "THICKNESS", "VIAS"], "COPPER THICKNESS VIAS FILLING"),
-        # Item 12
-        (["SOLDERABILITY", "TEST"], "SOLDERABILITY TEST"),
-        # Item 13
-        (["ELECTRIC", "TEST"], "ELECTRIC TEST"),
-        # Item 14 - Finish
-        (["ADHESION", "FINISH"], "ADHESION FINISH"),
-        # Item 14 - Solder resist
-        (["ADHESION", "SOLDER", "RESIST"], "ADHESION SOLDER RESIST"),
-        # Item 18
-        (["WARP", "TWIST"], "WARP TWIST"),
-        # Item 20
-        (["SOLDER", "MASK", "THICKNESS"], "SOLDER MASK THICKNESS"),
-        # Item 21
-        (["GOLD", "THICKNESS"], "GOLD THICKNESS"),
-        # Item 22
-        (["NICKEL", "THICKNESS"], "NICKEL THICKNESS"),
-        # Item 23 - ionic contamination
-        (["10321310", "1B2B1"], "IONIC CONTAMINATION 10321310"),
-        (["AFTER", "FINISH"], "IONIC CONTAMINATION AFTER FINISH"),
-        # Item 24
-        (["IMPEDANCE"], "IMPEDANCE"),
-    ]
+    # Items cibles
+    target_items = [1, 4, 5, 6, 8, 12, 13, 14, 18, 20, 21, 22, 23, 24]
     
-    # Pour chaque ligne du tableau
-    for row_data in all_rows:
-        test_name = row_data["test_name"].upper()
-        page_num = row_data["page"] - 1
+    # Pour chaque item cible
+    for item_num in target_items:
+        if item_num not in items:
+            continue
+        
+        item_data = items[item_num]
+        page_num = item_data["page"]
         
         if page_num >= len(document):
             continue
         
-        # Vérifier si cette ligne correspond à un item cible
-        should_highlight = False
-        matched_label = None
-        
-        for keywords, label in target_patterns:
-            if all(kw in test_name for kw in keywords):
-                should_highlight = True
-                matched_label = label
-                break
-        
-        if not should_highlight:
-            continue
-        
-        # Trouver la page dans le document fitz
         page = document[page_num]
         
-        # Chercher le texte du test_name dans la page
-        rects = page.search_for(row_data["test_name"])
-        if not rects:
-            # Essayer de chercher des parties du nom
-            for part in row_data["test_name"].split():
-                if len(part) > 3:
-                    rects = page.search_for(part)
-                    if rects:
-                        break
-        
-        if rects:
-            # Surligner toute la ligne
-            for rect in rects:
-                words = page.get_text("words")
-                mid_y = (rect.y0 + rect.y1) / 2
-                
-                for word in words:
-                    word_mid = (word[1] + word[3]) / 2
-                    if abs(word_mid - mid_y) <= 5:
-                        add_highlight_rect(page, fitz.Rect(word[0], word[1], word[2], word[3]))
-                        highlighted += 1
+        # Pour chaque mot de l'item, surligner
+        for word in item_data["words"]:
+            # Convertir les coordonnées pdfplumber en fitz
+            x0 = word["x0"]
+            y0 = word["top"]
+            x1 = word["x1"]
+            y1 = word["bottom"]
+            
+            # Ajouter une marge pour être sûr de surligner tout le mot
+            rect = fitz.Rect(x0, y0 - 1, x1, y1 + 1)
+            add_highlight_rect(page, rect)
+            highlighted += 1
     
     return highlighted
 
@@ -301,14 +250,12 @@ def highlight_hole_size(document) -> int:
         
         for i, word in enumerate(words):
             word_text = word[4].strip()
-            # Chercher une lettre majuscule suivie de chiffres
             if re.match(r"^[A-Z]$", word_text) and i + 1 < len(words):
                 next_text = words[i + 1][4].strip()
                 if re.search(r"\d", next_text):
                     mid_y = (word[1] + word[3]) / 2
                     y_key = round(mid_y / 2) * 2
                     if y_key not in used_y:
-                        # Récupérer tous les mots sur cette ligne
                         line_words = []
                         for w in words:
                             w_mid = (w[1] + w[3]) / 2
@@ -381,7 +328,6 @@ def highlight_xsection(document) -> int:
             if rects:
                 for rect in rects:
                     add_highlight_rect(page, rect)
-                # Surligner aussi la valeur
                 words = page.get_text("words")
                 for word in words:
                     if re.search(r"\d+[.,]\d+\s*mil", word[4]) or re.search(r"\d+[.,]\d+", word[4]):
@@ -433,8 +379,8 @@ def process_pdf(source_pdf: Path, output_pdf: Path, cover_terms: list[str]) -> i
     # 2. UL 94
     highlighted += highlight_ul94(document)
 
-    # 3. Tableau INSPECTION REPORT (avec pdfplumber)
-    highlighted += highlight_inspection_report_with_pdfplumber(document, source_pdf)
+    # 3. Tableau INSPECTION REPORT (avec coordonnées pdfplumber)
+    highlighted += highlight_inspection_report_with_coordinates(document, source_pdf)
 
     # 4. Tableau HOLE SIZE
     highlighted += highlight_hole_size(document)
