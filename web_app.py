@@ -89,7 +89,7 @@ def page_words(page) -> list[tuple[float, float, float, float, str]]:
     ]
 
 
-def get_line_from_rect(page, rect, tolerance: float = 3.5) -> list[tuple[float, float, float, float, str]]:
+def get_line_from_rect(page, rect, tolerance: float = 5.0) -> list[tuple[float, float, float, float, str]]:
     """Récupère tous les mots sur la même ligne qu'un rectangle."""
     anchor_mid = (rect.y0 + rect.y1) / 2
     words = page_words(page)
@@ -172,58 +172,94 @@ def highlight_inspection_report(document) -> int:
     if not inspection_page:
         return 0
 
-    # Récupérer tous les mots de la page
+    # Récupérer TOUT le texte de la page avec les coordonnées
     words = page_words(inspection_page)
     
-    # Grouper les mots par ligne (approximativement)
-    lines: dict[int, list[tuple[float, float, float, float, str]]] = {}
+    # Trouver les items par leur numéro
+    # On cherche d'abord tous les numéros d'items (1, 2, 3, ...)
+    item_positions = {}
     for x0, y0, x1, y1, text in words:
-        mid_y = int((y0 + y1) / 2)
-        if mid_y not in lines:
-            lines[mid_y] = []
-        lines[mid_y].append((x0, y0, x1, y1, text))
+        text_clean = text.strip()
+        # Si c'est un nombre (item number)
+        if text_clean.isdigit() and len(text_clean) <= 2:
+            num = int(text_clean)
+            if num not in item_positions:
+                item_positions[num] = (y0, y1)
     
-    # Trier les lignes par position Y
-    sorted_y = sorted(lines.keys())
+    # Items à surligner
+    target_items = [1, 4, 5, 6, 8, 12, 13, 14, 18, 20, 21, 22, 23, 24]
     
-    # Items à surligner par numéro
-    # Pour chaque item, on cherche le numéro puis on surligne la ligne correspondante
-    item_patterns = [
-        (r"^1\b", "LAMINATE MATERIAL"),
-        (r"^4\b", "CONDUCTOR WIDTH"),
-        (r"^5\b", "CONDUCTOR SPACE"),
-        (r"^6\b", "ANNULAR RING"),
-        (r"^8\b.*PTH", "COPPER THICKNESS PTH"),
-        (r"^8\b.*VIAS", "COPPER THICKNESS VIAS FILLING"),
-        (r"^12\b", "SOLDERABILITY TEST"),
-        (r"^13\b", "ELECTRIC TEST"),
-        (r"^14\b.*FINISH", "ADHESION FINISH"),
-        (r"^14\b.*SOLDER", "ADHESION SOLDER RESIST"),
-        (r"^18\b", "WARP TWIST"),
-        (r"^20\b", "SOLDER MASK THICKNESS"),
-        (r"^21\b", "GOLD THICKNESS"),
-        (r"^22\b", "NICKEL THICKNESS"),
-        (r"^23\b.*10321310", "IONIC CONTAMINATION 10321310 1B2B1"),
-        (r"^23\b.*AFTER", "IONIC CONTAMINATION AFTER FINISH"),
-        (r"^24\b", "IMPEDANCE"),
-    ]
+    # Pour chaque item cible, trouver la ligne correspondante
+    for item_num in target_items:
+        if item_num not in item_positions:
+            continue
+        
+        y0, y1 = item_positions[item_num]
+        mid_y = (y0 + y1) / 2
+        
+        # Récupérer tous les mots sur cette ligne
+        line_words = []
+        for x0, y0_w, x1, y1_w, text in words:
+            word_mid = (y0_w + y1_w) / 2
+            if abs(word_mid - mid_y) <= 5.0:
+                line_words.append((x0, y0_w, x1, y1_w, text))
+        
+        # Surligner la ligne
+        for x0, y0_w, x1, y1_w, text in line_words:
+            if text.strip():
+                add_highlight_rect(inspection_page, fitz.Rect(x0, y0_w, x1, y1_w))
+                highlighted += 1
     
-    # Pour chaque pattern d'item
-    for item_pattern, label in item_patterns:
-        for y in sorted_y:
-            line_words = lines.get(y, [])
-            if not line_words:
-                continue
-            # Construire le texte de la ligne
-            line_text = " ".join(text for _, _, _, _, text in line_words)
-            # Vérifier si la ligne commence par le numéro de l'item
-            if re.search(item_pattern, line_text, re.IGNORECASE):
-                # Surligner tous les mots de la ligne
-                for x0, y0, x1, y1, text in line_words:
-                    if text.strip():
-                        add_highlight_rect(inspection_page, fitz.Rect(x0, y0, x1, y1))
-                        highlighted += 1
-                break
+    # Cas spécial pour item 8: on veut PTH et Vias filling, pas BVH, IVH
+    # On va chercher les lignes qui contiennent "PTH" ou "Vias" sur la ligne de l'item 8
+    if 8 in item_positions:
+        y0, y1 = item_positions[8]
+        mid_y = (y0 + y1) / 2
+        # Chercher les sous-lignes de l'item 8
+        for x0, y0_w, x1, y1_w, text in words:
+            word_mid = (y0_w + y1_w) / 2
+            if abs(word_mid - mid_y) <= 15.0:  # Dans la zone de l'item 8
+                text_upper = text.upper()
+                # Surligner PTH et Vias filling, pas BVH, IVH
+                if "PTH" in text_upper and "BVH" not in text_upper and "IVH" not in text_upper:
+                    add_highlight_rect(inspection_page, fitz.Rect(x0, y0_w, x1, y1_w))
+                    highlighted += 1
+                if "VIAS" in text_upper or "FILLING" in text_upper:
+                    add_highlight_rect(inspection_page, fitz.Rect(x0, y0_w, x1, y1_w))
+                    highlighted += 1
+    
+    # Cas spécial pour item 14: Finish et Solder resist
+    if 14 in item_positions:
+        y0, y1 = item_positions[14]
+        mid_y = (y0 + y1) / 2
+        for x0, y0_w, x1, y1_w, text in words:
+            word_mid = (y0_w + y1_w) / 2
+            if abs(word_mid - mid_y) <= 15.0:
+                text_upper = text.upper()
+                if "FINISH" in text_upper:
+                    add_highlight_rect(inspection_page, fitz.Rect(x0, y0_w, x1, y1_w))
+                    highlighted += 1
+                if "SOLDER" in text_upper and "RESIST" in text_upper:
+                    add_highlight_rect(inspection_page, fitz.Rect(x0, y0_w, x1, y1_w))
+                    highlighted += 1
+    
+    # Cas spécial pour item 23: IONIC CONTAMINATION
+    if 23 in item_positions:
+        y0, y1 = item_positions[23]
+        mid_y = (y0 + y1) / 2
+        for x0, y0_w, x1, y1_w, text in words:
+            word_mid = (y0_w + y1_w) / 2
+            if abs(word_mid - mid_y) <= 20.0:
+                text_upper = text.upper()
+                if "10321310" in text_upper or "1B2B1" in text_upper:
+                    add_highlight_rect(inspection_page, fitz.Rect(x0, y0_w, x1, y1_w))
+                    highlighted += 1
+                if "AFTER" in text_upper and "FINISH" in text_upper:
+                    add_highlight_rect(inspection_page, fitz.Rect(x0, y0_w, x1, y1_w))
+                    highlighted += 1
+                if "INOIC" in text_upper or "IONIC" in text_upper or "CONTAMINATION" in text_upper:
+                    add_highlight_rect(inspection_page, fitz.Rect(x0, y0_w, x1, y1_w))
+                    highlighted += 1
     
     return highlighted
 
