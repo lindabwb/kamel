@@ -138,11 +138,9 @@ def highlight_cover_page(document, cover_terms: list[str]) -> int:
     for term in cover_terms:
         if not term or term.upper() in {"NA", "OK"}:
             continue
-        # Chercher des variantes
         for variant in search_variants(term):
             page, rect = find_first_rect(document, variant)
             if page and rect:
-                # Surligner toute la ligne
                 highlighted += highlight_line(page, rect)
                 break
     return highlighted
@@ -177,64 +175,49 @@ def highlight_inspection_report(document) -> int:
     # Récupérer tous les mots de la page
     words = page_words(inspection_page)
     
-    # Grouper les mots par ligne
-    lines: dict[float, list[tuple[float, float, float, float, str]]] = {}
+    # Grouper les mots par ligne (approximativement)
+    lines: dict[int, list[tuple[float, float, float, float, str]]] = {}
     for x0, y0, x1, y1, text in words:
-        mid_y = (y0 + y1) / 2
-        # Arrondir pour grouper les lignes proches
-        key = round(mid_y / 2) * 2
-        if key not in lines:
-            lines[key] = []
-        lines[key].append((x0, y0, x1, y1, text))
+        mid_y = int((y0 + y1) / 2)
+        if mid_y not in lines:
+            lines[mid_y] = []
+        lines[mid_y].append((x0, y0, x1, y1, text))
     
     # Trier les lignes par position Y
-    sorted_lines = sorted(lines.items())
+    sorted_y = sorted(lines.keys())
     
-    # Items à surligner avec leurs mots-clés
-    target_patterns = [
-        # item 1
-        (r"LAMINATE.*MATERIAL", ["LAMINATE", "MATERIAL"]),
-        # item 4
-        (r"CONDUCTOR.*WIDTH", ["CONDUCTOR", "WIDTH"]),
-        # item 5
-        (r"CONDUCTOR.*SPACE", ["CONDUCTOR", "SPACE"]),
-        # item 6
-        (r"ANNULAR.*RING", ["ANNULAR", "RING"]),
-        # item 8 - PTH (pas BVH, IVH)
-        (r"COPPER.*THICKNESS.*PTH", ["COPPER", "THICKNESS", "PTH"]),
-        # item 8 - Vias filling
-        (r"VIAS.*FILLING", ["VIAS", "FILLING"]),
-        # item 12
-        (r"SOLDERABILITY.*TEST", ["SOLDERABILITY", "TEST"]),
-        # item 13
-        (r"ELECTRIC.*TEST", ["ELECTRIC", "TEST"]),
-        # item 14 - Finish
-        (r"ADHESION.*FINISH", ["ADHESION", "FINISH"]),
-        # item 14 - Solder resist
-        (r"ADHESION.*SOLDER.*RESIST", ["ADHESION", "SOLDER", "RESIST"]),
-        # item 18
-        (r"WARP.*TWIST", ["WARP", "TWIST"]),
-        # item 20
-        (r"SOLDER.*MASK.*THICKNESS", ["SOLDER", "MASK", "THICKNESS"]),
-        # item 21
-        (r"GOLD.*THICKNESS", ["GOLD", "THICKNESS"]),
-        # item 22
-        (r"NICKEL.*THICKNESS", ["NICKEL", "THICKNESS"]),
-        # item 23 - ionic contamination 10321310 1B2B1
-        (r"10321310.*1B2B1", ["10321310", "1B2B1"]),
-        # item 23 - AFTER FINISH
-        (r"AFTER.*FINISH", ["AFTER", "FINISH"]),
-        # item 24 - IMPEDANCE
-        (r"IMPEDANCE", ["IMPEDANCE"]),
+    # Items à surligner par numéro
+    # Pour chaque item, on cherche le numéro puis on surligne la ligne correspondante
+    item_patterns = [
+        (r"^1\b", "LAMINATE MATERIAL"),
+        (r"^4\b", "CONDUCTOR WIDTH"),
+        (r"^5\b", "CONDUCTOR SPACE"),
+        (r"^6\b", "ANNULAR RING"),
+        (r"^8\b.*PTH", "COPPER THICKNESS PTH"),
+        (r"^8\b.*VIAS", "COPPER THICKNESS VIAS FILLING"),
+        (r"^12\b", "SOLDERABILITY TEST"),
+        (r"^13\b", "ELECTRIC TEST"),
+        (r"^14\b.*FINISH", "ADHESION FINISH"),
+        (r"^14\b.*SOLDER", "ADHESION SOLDER RESIST"),
+        (r"^18\b", "WARP TWIST"),
+        (r"^20\b", "SOLDER MASK THICKNESS"),
+        (r"^21\b", "GOLD THICKNESS"),
+        (r"^22\b", "NICKEL THICKNESS"),
+        (r"^23\b.*10321310", "IONIC CONTAMINATION 10321310 1B2B1"),
+        (r"^23\b.*AFTER", "IONIC CONTAMINATION AFTER FINISH"),
+        (r"^24\b", "IMPEDANCE"),
     ]
     
-    # Pour chaque pattern, trouver la ligne correspondante
-    for pattern, keywords in target_patterns:
-        for line_key, line_words in sorted_lines:
+    # Pour chaque pattern d'item
+    for item_pattern, label in item_patterns:
+        for y in sorted_y:
+            line_words = lines.get(y, [])
+            if not line_words:
+                continue
             # Construire le texte de la ligne
-            line_text = " ".join(text for _, _, _, _, text in line_words).upper()
-            # Vérifier si la ligne correspond au pattern
-            if re.search(pattern, line_text, re.IGNORECASE):
+            line_text = " ".join(text for _, _, _, _, text in line_words)
+            # Vérifier si la ligne commence par le numéro de l'item
+            if re.search(item_pattern, line_text, re.IGNORECASE):
                 # Surligner tous les mots de la ligne
                 for x0, y0, x1, y1, text in line_words:
                     if text.strip():
@@ -255,12 +238,10 @@ def highlight_hole_size(document) -> int:
             continue
 
         words = page_words(page)
-        # Chercher les lignes avec des valeurs de trous
         candidate_lines: list[list[tuple[float, float, float, float, str]]] = []
         used_y: set[float] = set()
 
         for i, (x0, y0, x1, y1, text) in enumerate(words):
-            # Chercher des motifs de trous: lettre majuscule suivie de chiffres
             if re.match(r"^[A-Z]\s*$", text.strip()) and i + 1 < len(words):
                 next_text = words[i + 1][4]
                 if re.search(r"\d", next_text):
@@ -289,12 +270,10 @@ def highlight_dimension_table(document) -> int:
             continue
 
         words = page_words(page)
-        # Chercher les lignes avec des dimensions
         best_line = None
         best_value = -1.0
 
         for i, (x0, y0, x1, y1, text) in enumerate(words):
-            # Chercher des nombres avec ±
             if "±" in text or "+/-" in text:
                 match = re.search(r"(\d+[.,]\d+)", text)
                 if match:
@@ -330,7 +309,6 @@ def highlight_xsection(document) -> int:
                 rects = page.search_for("HOLE WALL")
             if rects:
                 add_highlight_rect(page, rects[0])
-                # Surligner aussi la valeur
                 line_words = get_line_from_rect(page, rects[0])
                 for x0, y0, x1, y1, t in line_words:
                     if re.search(r"\d+[.,]\d+\s*mil", t) or re.search(r"\d+[.,]\d+", t):
