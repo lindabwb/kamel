@@ -8,6 +8,7 @@ import uuid
 import webbrowser
 import zipfile
 import re
+import random  # <--- AJOUTER CETTE LIGNE
 from pathlib import Path
 
 import fitz
