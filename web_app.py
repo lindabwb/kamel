@@ -15,9 +15,7 @@ import fitz
 from flask import Flask, render_template, request, send_file, url_for
 from werkzeug.utils import secure_filename
 
-from pcb import (
-    extract_pdf_report,
-)
+from pcb import parse_filename_values_from_name
 
 
 if getattr(sys, "frozen", False):
@@ -55,6 +53,25 @@ def report_download_name(uploaded_names: list[str]) -> str:
 def verified_pdf_name(original_name: str) -> str:
     path = Path(original_name)
     return f"{path.stem}V.pdf"
+
+
+def cover_terms_from_filename(filename: str) -> list[str]:
+    values = parse_filename_values_from_name(filename)
+    terms: list[str] = []
+    for field in ("P.O.NO", "PART NO", "DATA CODE"):
+        value = values.get(field, "NA")
+        if value and value != "NA":
+            terms.append(value)
+
+    quantity = values.get("QUANTITY", "NA")
+    if quantity and quantity != "NA":
+        terms.append(quantity)
+        quantity_number = re.search(r"\d+", quantity)
+        if quantity_number:
+            terms.append(quantity_number.group(0))
+        terms.append("PCS")
+
+    return list(dict.fromkeys(terms))
 
 
 def split_highlight_values(value: str) -> list[str]:
@@ -151,10 +168,13 @@ IMPEDANCE_MARKERS = ["L10", "L3", "L2", "L13", "L1", "B2", "B1"]
 def highlight_first_table_by_keywords(document) -> int:
     highlighted = 0
     used_lines: set[tuple[int, int]] = set()
+    page_cache: list[tuple[int, object, str, str, list[tuple[float, float, float, float, str]]]] = []
 
-    def skip_page(page) -> bool:
+    for page_index, page in enumerate(document):
         text = page.get_text("text").upper()
-        return "CONTENTS" in text or "WIRING, PRINTED - COMPONENT" in text
+        if "CONTENTS" in text or "WIRING, PRINTED - COMPONENT" in text:
+            continue
+        page_cache.append((page_index, page, text, compact_text(text), page_words(page)))
 
     def line_text(words: list[tuple[float, float, float, float, str]], rect) -> str:
         anchor_mid = (rect.y0 + rect.y1) / 2
@@ -172,18 +192,26 @@ def highlight_first_table_by_keywords(document) -> int:
             return 0
         used_lines.add(line_key)
         page = document[page_index]
-        return highlight_text_line(page, rect, page_words(page))
+        words = next((cached_words for cached_index, _, _, _, cached_words in page_cache if cached_index == page_index), page_words(page))
+        return highlight_text_line(page, rect, words)
 
     for keyword_group, required_words in FIRST_TABLE_TARGETS:
-        for page_index, page in enumerate(document):
-            if skip_page(page):
+        compact_required = [compact_text(word) for word in required_words]
+        for page_index, page, _text, compact, words in page_cache:
+            if not all(word in compact for word in compact_required):
                 continue
-            words = page_words(page)
             found = False
             for keyword in keyword_group:
                 for variant in search_variants(keyword):
                     rects = page.search_for(variant)
-                    rect = next((rect for rect in rects if line_has_requirements(line_text(words, rect), required_words)), None)
+                    rect = next(
+                        (
+                            rect
+                            for rect in rects
+                            if line_has_requirements(line_text(words, rect), required_words)
+                        ),
+                        None,
+                    )
                     if rect:
                         highlighted += add_line_once(page_index, rect)
                         found = True
@@ -194,11 +222,12 @@ def highlight_first_table_by_keywords(document) -> int:
                 break
 
     marker_pattern = re.compile(r"\b(" + "|".join(re.escape(marker) for marker in IMPEDANCE_MARKERS) + r")\b")
-    for page_index, page in enumerate(document):
-        if skip_page(page):
+    for page_index, page, text, _compact, words in page_cache:
+        if "IMPEDANCE" not in text:
             continue
-        words = page_words(page)
         for marker in IMPEDANCE_MARKERS:
+            if marker not in text:
+                continue
             for rect in page.search_for(marker):
                 anchor_mid = (rect.y0 + rect.y1) / 2
                 line_text = " ".join(
@@ -651,26 +680,19 @@ def process():
         uploaded_file.save(pdf_path)
 
         try:
-            report = extract_pdf_report(pdf_path, display_name=original_name)
-            cover_terms, standard_terms, selected_rows, extra_terms, page_terms, stackup_pages = build_highlight_data(
-                report.cover_rows,
-                report.standard_rows,
-                report.inspection_rows,
-            )
             highlighted_pdf_path = run_dir / "highlighted" / verified_pdf_name(original_name)
-            highlight_rows_in_pdf(
+            highlighted_count = highlight_rows_in_pdf(
                 pdf_path,
                 highlighted_pdf_path,
-                cover_terms,
-                standard_terms,
-                selected_rows,
-                extra_terms,
-                page_terms,
-                stackup_pages,
+                cover_terms_from_filename(original_name),
+                [],
+                [],
+                ["HOLE WALL COPPER THICKNESS"],
+                [],
+                set(),
             )
             highlighted_paths.append(highlighted_pdf_path)
-            sampled_total += len(selected_rows)
-            warnings.extend(report.warnings)
+            sampled_total += highlighted_count
         except Exception as exc:
             shutil.rmtree(run_dir, ignore_errors=True)
             return render_template(
