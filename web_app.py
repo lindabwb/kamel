@@ -8,7 +8,6 @@ import uuid
 import webbrowser
 import zipfile
 import re
-import random  # <--- AJOUTER CETTE LIGNE
 from pathlib import Path
 
 import fitz
@@ -242,6 +241,8 @@ def highlight_inspection_report(document) -> int:
 
 def highlight_hole_size(document) -> int:
     """Surligne une ligne aléatoire du tableau HOLE SIZE."""
+    import random
+    
     for page in document:
         text = page.get_text("text")
         if "HOLE SIZE" not in text and "DRW. DIMENSION" not in text:
@@ -502,8 +503,6 @@ def clear(run_id: str):
 
 
 if __name__ == "__main__":
-    import random
-
     def open_browser() -> None:
         time.sleep(1.5)
         webbrowser.open("http://127.0.0.1:5000")
