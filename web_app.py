@@ -111,9 +111,9 @@ def highlight_ul94(document) -> int:
     return 0
 
 
-def extract_table_data(pdf_path: Path) -> list[dict]:
-    """Extrait les données du tableau INSPECTION REPORT avec pdfplumber."""
-    table_rows = []
+def extract_all_inspection_data(pdf_path: Path) -> list[dict]:
+    """Extrait les données du tableau INSPECTION REPORT sur toutes les pages."""
+    all_rows = []
     
     with pdfplumber.open(pdf_path) as pdf:
         for page_num, page in enumerate(pdf.pages):
@@ -131,6 +131,7 @@ def extract_table_data(pdf_path: Path) -> list[dict]:
                     for table in tables:
                         if not table or len(table) < 2:
                             continue
+                        
                         # Chercher l'en-tête
                         header_row = None
                         for i, row in enumerate(table):
@@ -141,7 +142,7 @@ def extract_table_data(pdf_path: Path) -> list[dict]:
                         if header_row is None:
                             continue
                         
-                        # Trouver les colonnes SPEC et RESULTS
+                        # Trouver les colonnes
                         spec_col = None
                         results_col = None
                         description_col = None
@@ -160,32 +161,34 @@ def extract_table_data(pdf_path: Path) -> list[dict]:
                             continue
                         
                         # Extraire les données
-                        for row in table[header_row + 1:]:
+                        for row_idx, row in enumerate(table[header_row + 1:], start=header_row + 1):
                             if not row or len(row) <= max(spec_col, results_col):
                                 continue
+                            
                             test_name = str(row[description_col]).strip() if description_col is not None and description_col < len(row) else ""
                             spec = str(row[spec_col]).strip() if spec_col < len(row) else ""
                             results = str(row[results_col]).strip() if results_col < len(row) else ""
                             
-                            if test_name and test_name.upper() not in ["", "NA", "NONE"]:
-                                table_rows.append({
+                            # Nettoyer
+                            test_name = re.sub(r'\s+', ' ', test_name).strip()
+                            spec = re.sub(r'\s+', ' ', spec).strip()
+                            results = re.sub(r'\s+', ' ', results).strip()
+                            
+                            if test_name and test_name.upper() not in ["", "NA", "NONE", "ITEM"]:
+                                all_rows.append({
                                     "page": page_num + 1,
                                     "test_name": test_name,
                                     "spec": spec,
                                     "results": results,
-                                    "row": row,
-                                    "table": table,
-                                    "header_row": header_row,
-                                    "spec_col": spec_col,
-                                    "results_col": results_col,
-                                    "description_col": description_col,
+                                    "row_idx": row_idx,
+                                    "table_row": row,
                                 })
-                    if table_rows:
+                    if all_rows:
                         break
                 except Exception:
                     continue
     
-    return table_rows
+    return all_rows
 
 
 def highlight_inspection_report_with_pdfplumber(document: fitz.Document, pdf_path: Path) -> int:
@@ -193,34 +196,49 @@ def highlight_inspection_report_with_pdfplumber(document: fitz.Document, pdf_pat
     highlighted = 0
     
     # Extraire les données du tableau
-    table_rows = extract_table_data(pdf_path)
+    all_rows = extract_all_inspection_data(pdf_path)
     
-    if not table_rows:
+    if not all_rows:
         return 0
     
-    # Items à surligner (par mots-clés dans test_name)
-    target_keywords = [
-        ("LAMINATE MATERIAL", ["LAMINATE", "MATERIAL"]),
-        ("CONDUCTOR WIDTH", ["CONDUCTOR", "WIDTH"]),
-        ("CONDUCTOR SPACE", ["CONDUCTOR", "SPACE"]),
-        ("ANNULAR RING", ["ANNULAR", "RING"]),
-        ("COPPER THICKNESS PTH", ["COPPER", "THICKNESS", "PTH"]),
-        ("COPPER THICKNESS VIAS", ["VIAS", "FILLING"]),
-        ("SOLDERABILITY TEST", ["SOLDERABILITY", "TEST"]),
-        ("ELECTRIC TEST", ["ELECTRIC", "TEST"]),
-        ("ADHESION FINISH", ["ADHESION", "FINISH"]),
-        ("ADHESION SOLDER RESIST", ["ADHESION", "SOLDER", "RESIST"]),
-        ("WARP TWIST", ["WARP", "TWIST"]),
-        ("SOLDER MASK THICKNESS", ["SOLDER", "MASK", "THICKNESS"]),
-        ("GOLD THICKNESS", ["GOLD", "THICKNESS"]),
-        ("NICKEL THICKNESS", ["NICKEL", "THICKNESS"]),
-        ("IONIC CONTAMINATION 10321310", ["10321310", "1B2B1"]),
-        ("IONIC CONTAMINATION AFTER FINISH", ["AFTER", "FINISH"]),
-        ("IMPEDANCE", ["IMPEDANCE"]),
+    # Items à surligner avec leurs mots-clés
+    target_patterns = [
+        # Item 1
+        (["LAMINATE", "MATERIAL"], "LAMINATE MATERIAL"),
+        # Item 4
+        (["CONDUCTOR", "WIDTH"], "CONDUCTOR WIDTH"),
+        # Item 5
+        (["CONDUCTOR", "SPACE"], "CONDUCTOR SPACE"),
+        # Item 6
+        (["ANNULAR", "RING"], "ANNULAR RING"),
+        # Item 8 - PTH (pas BVH, IVH)
+        (["COPPER", "THICKNESS", "PTH"], "COPPER THICKNESS PTH"),
+        (["COPPER", "THICKNESS", "VIAS"], "COPPER THICKNESS VIAS FILLING"),
+        # Item 12
+        (["SOLDERABILITY", "TEST"], "SOLDERABILITY TEST"),
+        # Item 13
+        (["ELECTRIC", "TEST"], "ELECTRIC TEST"),
+        # Item 14 - Finish
+        (["ADHESION", "FINISH"], "ADHESION FINISH"),
+        # Item 14 - Solder resist
+        (["ADHESION", "SOLDER", "RESIST"], "ADHESION SOLDER RESIST"),
+        # Item 18
+        (["WARP", "TWIST"], "WARP TWIST"),
+        # Item 20
+        (["SOLDER", "MASK", "THICKNESS"], "SOLDER MASK THICKNESS"),
+        # Item 21
+        (["GOLD", "THICKNESS"], "GOLD THICKNESS"),
+        # Item 22
+        (["NICKEL", "THICKNESS"], "NICKEL THICKNESS"),
+        # Item 23 - ionic contamination
+        (["10321310", "1B2B1"], "IONIC CONTAMINATION 10321310"),
+        (["AFTER", "FINISH"], "IONIC CONTAMINATION AFTER FINISH"),
+        # Item 24
+        (["IMPEDANCE"], "IMPEDANCE"),
     ]
     
     # Pour chaque ligne du tableau
-    for row_data in table_rows:
+    for row_data in all_rows:
         test_name = row_data["test_name"].upper()
         page_num = row_data["page"] - 1
         
@@ -229,9 +247,12 @@ def highlight_inspection_report_with_pdfplumber(document: fitz.Document, pdf_pat
         
         # Vérifier si cette ligne correspond à un item cible
         should_highlight = False
-        for label, keywords in target_keywords:
+        matched_label = None
+        
+        for keywords, label in target_patterns:
             if all(kw in test_name for kw in keywords):
                 should_highlight = True
+                matched_label = label
                 break
         
         if not should_highlight:
@@ -253,7 +274,6 @@ def highlight_inspection_report_with_pdfplumber(document: fitz.Document, pdf_pat
         if rects:
             # Surligner toute la ligne
             for rect in rects:
-                # Prendre la ligne complète
                 words = page.get_text("words")
                 mid_y = (rect.y0 + rect.y1) / 2
                 
