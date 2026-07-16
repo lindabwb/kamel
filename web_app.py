@@ -120,25 +120,12 @@ def find_first_rect(document, term: str) -> tuple[fitz.Page | None, fitz.Rect | 
     return None, None
 
 
-def find_rects(document, term: str) -> list[tuple[int, fitz.Rect]]:
-    """Trouve tous les rectangles contenant le terme recherché."""
-    matches: list[tuple[int, fitz.Rect]] = []
-    for page_index, page in enumerate(document):
-        for variant in search_variants(term):
-            rects = page.search_for(variant)
-            if rects:
-                matches.extend((page_index, rect) for rect in rects)
-                break
-    return matches
-
-
 def search_variants(term: str) -> list[str]:
     """Génère des variantes d'un terme pour la recherche."""
     variants = [
         term,
         term.replace(" ", ""),
         term.replace(" / ", "/"),
-        term.replace(" ", " "),
     ]
     if "94V0" in term.upper() or "94V-0" in term.upper():
         variants.extend(["94V0", "94V-0", "UL 94 Flame Class 94V0", "UL 94 Flame Class 94V-0"])
@@ -151,10 +138,13 @@ def highlight_cover_page(document, cover_terms: list[str]) -> int:
     for term in cover_terms:
         if not term or term.upper() in {"NA", "OK"}:
             continue
-        page, rect = find_first_rect(document, term)
-        if page and rect:
-            add_highlight_rect(page, rect)
-            highlighted += 1
+        # Chercher des variantes
+        for variant in search_variants(term):
+            page, rect = find_first_rect(document, variant)
+            if page and rect:
+                # Surligner toute la ligne
+                highlighted += highlight_line(page, rect)
+                break
     return highlighted
 
 
@@ -172,70 +162,86 @@ def highlight_ul94(document) -> int:
 def highlight_inspection_report(document) -> int:
     """Surligne les lignes spécifiques du tableau INSPECTION REPORT."""
     highlighted = 0
-    inspection_page = None
-    inspection_index = -1
-
+    
     # Trouver la page du tableau INSPECTION REPORT
-    for idx, page in enumerate(document):
+    inspection_page = None
+    for page in document:
         text = page.get_text("text")
         if "INSPECTION REPORT" in text:
             inspection_page = page
-            inspection_index = idx
             break
 
     if not inspection_page:
         return 0
 
+    # Récupérer tous les mots de la page
+    words = page_words(inspection_page)
+    
+    # Grouper les mots par ligne
+    lines: dict[float, list[tuple[float, float, float, float, str]]] = {}
+    for x0, y0, x1, y1, text in words:
+        mid_y = (y0 + y1) / 2
+        # Arrondir pour grouper les lignes proches
+        key = round(mid_y / 2) * 2
+        if key not in lines:
+            lines[key] = []
+        lines[key].append((x0, y0, x1, y1, text))
+    
+    # Trier les lignes par position Y
+    sorted_lines = sorted(lines.items())
+    
     # Items à surligner avec leurs mots-clés
-    target_items = [
+    target_patterns = [
         # item 1
-        ["LAMINATE", "MATERIAL"],
+        (r"LAMINATE.*MATERIAL", ["LAMINATE", "MATERIAL"]),
         # item 4
-        ["CONDUCTOR", "WIDTH"],
+        (r"CONDUCTOR.*WIDTH", ["CONDUCTOR", "WIDTH"]),
         # item 5
-        ["CONDUCTOR", "SPACE"],
+        (r"CONDUCTOR.*SPACE", ["CONDUCTOR", "SPACE"]),
         # item 6
-        ["ANNULAR", "RING"],
-        # item 8 - PTH et Vias filling (pas BVH, IVH)
-        ["PTH"],
-        ["Vias", "filling"],
+        (r"ANNULAR.*RING", ["ANNULAR", "RING"]),
+        # item 8 - PTH (pas BVH, IVH)
+        (r"COPPER.*THICKNESS.*PTH", ["COPPER", "THICKNESS", "PTH"]),
+        # item 8 - Vias filling
+        (r"VIAS.*FILLING", ["VIAS", "FILLING"]),
         # item 12
-        ["SOLDERABILITY", "TEST"],
+        (r"SOLDERABILITY.*TEST", ["SOLDERABILITY", "TEST"]),
         # item 13
-        ["ELECTRIC", "TEST"],
-        # item 14 - Finish et Solder resist
-        ["Finish"],
-        ["Solder", "resist"],
+        (r"ELECTRIC.*TEST", ["ELECTRIC", "TEST"]),
+        # item 14 - Finish
+        (r"ADHESION.*FINISH", ["ADHESION", "FINISH"]),
+        # item 14 - Solder resist
+        (r"ADHESION.*SOLDER.*RESIST", ["ADHESION", "SOLDER", "RESIST"]),
         # item 18
-        ["WARP", "TWIST"],
+        (r"WARP.*TWIST", ["WARP", "TWIST"]),
         # item 20
-        ["SOLDER", "MASK", "THICKNESS"],
+        (r"SOLDER.*MASK.*THICKNESS", ["SOLDER", "MASK", "THICKNESS"]),
         # item 21
-        ["GOLD", "THICKNESS"],
+        (r"GOLD.*THICKNESS", ["GOLD", "THICKNESS"]),
         # item 22
-        ["NICKEL", "THICKNESS"],
-        # item 23 - ionic contamination
-        ["10321310", "1B2B1"],
-        ["AFTER", "FINISH"],
+        (r"NICKEL.*THICKNESS", ["NICKEL", "THICKNESS"]),
+        # item 23 - ionic contamination 10321310 1B2B1
+        (r"10321310.*1B2B1", ["10321310", "1B2B1"]),
+        # item 23 - AFTER FINISH
+        (r"AFTER.*FINISH", ["AFTER", "FINISH"]),
         # item 24 - IMPEDANCE
-        ["IMPEDANCE"],
+        (r"IMPEDANCE", ["IMPEDANCE"]),
     ]
-
-    # Pour chaque item, trouver la ligne et la surligner
-    for keywords in target_items:
-        # Chercher chaque mot-clé
-        for keyword in keywords:
-            rects = inspection_page.search_for(keyword)
-            if rects:
-                # Vérifier que c'est la bonne ligne
-                for rect in rects:
-                    line_text = " ".join(text for _, _, _, _, text in get_line_from_rect(inspection_page, rect))
-                    # Vérifier que tous les mots-clés sont sur la ligne
-                    if all(kw in line_text for kw in keywords):
-                        highlighted += highlight_line(inspection_page, rect)
-                        break
+    
+    # Pour chaque pattern, trouver la ligne correspondante
+    for pattern, keywords in target_patterns:
+        for line_key, line_words in sorted_lines:
+            # Construire le texte de la ligne
+            line_text = " ".join(text for _, _, _, _, text in line_words).upper()
+            # Vérifier si la ligne correspond au pattern
+            if re.search(pattern, line_text, re.IGNORECASE):
+                # Surligner tous les mots de la ligne
+                for x0, y0, x1, y1, text in line_words:
+                    if text.strip():
+                        add_highlight_rect(inspection_page, fitz.Rect(x0, y0, x1, y1))
+                        highlighted += 1
                 break
-
+    
     return highlighted
 
 
@@ -249,17 +255,15 @@ def highlight_hole_size(document) -> int:
             continue
 
         words = page_words(page)
-        # Chercher les lignes avec des valeurs de trous (format: A 0.0098±0.003 ...)
+        # Chercher les lignes avec des valeurs de trous
         candidate_lines: list[list[tuple[float, float, float, float, str]]] = []
         used_y: set[float] = set()
 
         for i, (x0, y0, x1, y1, text) in enumerate(words):
             # Chercher des motifs de trous: lettre majuscule suivie de chiffres
             if re.match(r"^[A-Z]\s*$", text.strip()) and i + 1 < len(words):
-                # Vérifier que la ligne suivante contient un nombre
                 next_text = words[i + 1][4]
                 if re.search(r"\d", next_text):
-                    # Prendre toute la ligne
                     mid = (y0 + y1) / 2
                     if mid not in used_y:
                         line_words = get_line_from_rect(page, fitz.Rect(x0, y0, x1, y1))
@@ -268,7 +272,6 @@ def highlight_hole_size(document) -> int:
                             used_y.add(mid)
 
         if candidate_lines:
-            # Choisir une ligne aléatoire
             selected = random.choice(candidate_lines)
             for x0, y0, x1, y1, text in selected:
                 if text.strip():
@@ -286,24 +289,21 @@ def highlight_dimension_table(document) -> int:
             continue
 
         words = page_words(page)
-        # Chercher les lignes avec des dimensions (format: ITEM 146.09±0.127 ...)
+        # Chercher les lignes avec des dimensions
         best_line = None
         best_value = -1.0
 
         for i, (x0, y0, x1, y1, text) in enumerate(words):
             # Chercher des nombres avec ±
             if "±" in text or "+/-" in text:
-                # Extraire la valeur numérique
                 match = re.search(r"(\d+[.,]\d+)", text)
                 if match:
                     try:
                         value = float(match.group(1).replace(",", "."))
                         if value > best_value:
-                            # Prendre toute la ligne
                             rect = fitz.Rect(x0, y0, x1, y1)
                             line_words = get_line_from_rect(page, rect)
                             if line_words:
-                                # Vérifier que c'est une ligne de dimension (contient ITEM ou un numéro)
                                 line_text = " ".join(t for _, _, _, _, t in line_words)
                                 if "ITEM" in line_text or re.search(r"\d+\s*[±]", line_text):
                                     best_line = line_words
@@ -348,7 +348,6 @@ def highlight_stackup(document) -> int:
         if "STACKUP" not in text.upper():
             continue
 
-        # Trouver le début du tableau
         words = page_words(page)
         stackup_start_y = None
 
@@ -360,12 +359,9 @@ def highlight_stackup(document) -> int:
         if stackup_start_y is None:
             continue
 
-        # Surligner toutes les lignes du tableau
         for x0, y0, x1, y1, word in words:
-            # Ne pas surligner au-dessus du titre STACKUP
             if y0 < stackup_start_y:
                 continue
-            # Ne pas surligner trop bas (pied de page)
             if y0 > page.rect.height - 50:
                 continue
             if word.strip():
