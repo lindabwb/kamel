@@ -125,6 +125,93 @@ def highlight_first_value(document, term: str) -> int:
     return 1
 
 
+FIRST_TABLE_TARGETS = [
+    (["LAMINATE MATERIAL"], ["LAMINATE", "MATERIAL"]),
+    (["CONDUCTOR WIDTH"], ["CONDUCTOR", "WIDTH"]),
+    (["CONDUCTOR SPACE"], ["CONDUCTOR", "SPACE"]),
+    (["ANNULAR RING"], ["ANNULAR", "RING"]),
+    (["COPPER THICKNESS - PTH", "PTH"], ["COPPER", "THICKNESS", "PTH"]),
+    (["COPPER THICKNESS - Vias filling", "Vias filling"], ["COPPER", "THICKNESS", "VIAS"]),
+    (["SOLDERABILITY TEST"], ["SOLDERABILITY"]),
+    (["ELECTRIC TEST - IPCTM650 2.5", "ELECTRIC TEST"], ["ELECTRIC", "TEST"]),
+    (["Adhesion - Finish", "Finish"], ["ADHESION", "FINISH"]),
+    (["Adhesion - Solder resist", "Solder resist"], ["ADHESION", "SOLDER", "RESIST"]),
+    (["WARP＆TWIST", "WARP&TWIST", "WARP"], ["WARP"]),
+    (["SOLDER MASK THICKNESS"], ["SOLDER", "MASK", "THICKNESS"]),
+    (["GOLD THICKNESS"], ["GOLD", "THICKNESS"]),
+    (["NICKEL THICKNESS"], ["NICKEL", "THICKNESS"]),
+    (["INOIC CONTAMINATION - 10321310 1B2B1", "IONIC CONTAMINATION - 10321310 1B2B1", "10321310 1B2B1"], ["CONTAMINATION", "1B2B1"]),
+    (["INOIC CONTAMINATION - AFTER FINISH", "IONIC CONTAMINATION - AFTER FINISH", "AFTER FINISH"], ["CONTAMINATION", "AFTER", "FINISH"]),
+]
+
+
+IMPEDANCE_MARKERS = ["L10", "L3", "L2", "L13", "L1", "B2", "B1"]
+
+
+def highlight_first_table_by_keywords(document) -> int:
+    highlighted = 0
+    used_lines: set[tuple[int, int]] = set()
+
+    def skip_page(page) -> bool:
+        text = page.get_text("text").upper()
+        return "CONTENTS" in text or "WIRING, PRINTED - COMPONENT" in text
+
+    def line_text(words: list[tuple[float, float, float, float, str]], rect) -> str:
+        anchor_mid = (rect.y0 + rect.y1) / 2
+        return " ".join(
+            text for x0, y0, x1, y1, text in words if abs(((y0 + y1) / 2) - anchor_mid) <= 3.5
+        ).upper()
+
+    def line_has_requirements(text: str, required_words: list[str]) -> bool:
+        compact = compact_text(text)
+        return all(compact_text(word) in compact for word in required_words)
+
+    def add_line_once(page_index: int, rect) -> int:
+        line_key = (page_index, round((rect.y0 + rect.y1) / 2))
+        if line_key in used_lines:
+            return 0
+        used_lines.add(line_key)
+        page = document[page_index]
+        return highlight_text_line(page, rect, page_words(page))
+
+    for keyword_group, required_words in FIRST_TABLE_TARGETS:
+        for page_index, page in enumerate(document):
+            if skip_page(page):
+                continue
+            words = page_words(page)
+            found = False
+            for keyword in keyword_group:
+                for variant in search_variants(keyword):
+                    rects = page.search_for(variant)
+                    rect = next((rect for rect in rects if line_has_requirements(line_text(words, rect), required_words)), None)
+                    if rect:
+                        highlighted += add_line_once(page_index, rect)
+                        found = True
+                        break
+                if found:
+                    break
+            if found:
+                break
+
+    marker_pattern = re.compile(r"\b(" + "|".join(re.escape(marker) for marker in IMPEDANCE_MARKERS) + r")\b")
+    for page_index, page in enumerate(document):
+        if skip_page(page):
+            continue
+        words = page_words(page)
+        for marker in IMPEDANCE_MARKERS:
+            for rect in page.search_for(marker):
+                anchor_mid = (rect.y0 + rect.y1) / 2
+                line_text = " ".join(
+                    text for x0, y0, x1, y1, text in words if abs(((y0 + y1) / 2) - anchor_mid) <= 3.5
+                )
+                if "IMPEDANCE" not in line_text.upper() or not marker_pattern.search(line_text):
+                    continue
+                highlighted += add_line_once(page_index, rect)
+                break
+
+    return highlighted
+
+
 def highlight_stackup_pages(document, page_numbers: set[str]) -> int:
     for index, page in enumerate(document):
         text = page.get_text("text").upper().replace(" ", "")
@@ -415,6 +502,7 @@ def highlight_rows_in_pdf(
         highlighted += highlight_first_value(document, "UL 94 Flame Class 94V-0")
     if not highlighted:
         highlighted += highlight_first_value(document, "94V0")
+    highlighted += highlight_first_table_by_keywords(document)
 
     for term in cover_terms:
         clean_term = " ".join(str(term).split())
@@ -510,7 +598,7 @@ def build_highlight_data(
 
     for row in inspection_rows:
         if first_table_required(row):
-            add_row(row, require_conformity=True)
+            continue
     hole_rows = [row for row in inspection_rows if is_hole_size_row(row) and row.get("Conformite") == "CONFORME"]
     if hole_rows:
         add_row(random.choice(hole_rows), require_conformity=True)
