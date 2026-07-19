@@ -9,6 +9,7 @@ import webbrowser
 import zipfile
 import re
 import logging
+import signal
 from pathlib import Path
 
 import fitz
@@ -16,6 +17,7 @@ from flask import Flask, render_template, request, send_file
 from werkzeug.utils import secure_filename
 
 from pcb import (
+    extract_pdf_report,
     parse_filename_values_from_name,
 )
 
@@ -177,24 +179,34 @@ def highlight_ul94(document) -> int:
     return 0
 
 
-def highlight_table_by_item_numbers(document, page_num, target_items, page) -> int:
-    """Surligne les lignes correspondant aux numéros d'items dans un tableau."""
+def highlight_inspection_report(document) -> int:
+    """Surligne les items du tableau INSPECTION REPORT."""
+    logger.info("Surlignage INSPECTION REPORT")
     highlighted = 0
-    lines = get_text_lines(page)
-    
-    for y_key in sorted(lines.keys()):
-        line_words = sorted(lines[y_key], key=lambda w: w[0])
-        line_text = " ".join(w[4] for w in line_words)
-        
-        match = re.match(r"^(\d+)", line_text.strip())
-        if match:
-            item_num = int(match.group(1))
-            if item_num in target_items:
-                logger.info(f"Item {item_num} trouvé page {page_num + 1}")
-                for word in line_words:
-                    if word[4].strip():
-                        add_highlight_rect(page, fitz.Rect(word[0], word[1], word[2], word[3]))
-                        highlighted += 1
+
+    full_item_lines = {1, 4, 5, 6, 12, 13, 18, 20, 21, 22, 24}
+    inspection_started = False
+
+    for page_num, page in enumerate(document):
+        text = page.get_text("text")
+        if not is_inspection_page(text, inspection_started):
+            continue
+        inspection_started = True
+        logger.info(f"Page {page_num + 1}: INSPECTION REPORT trouvé")
+
+        lines = sorted_text_lines(page)
+
+        for item_num in full_item_lines:
+            highlighted += highlight_inspection_item_line(page, lines, item_num)
+
+        highlighted += highlight_lines_in_item_block(page, lines, 8, ["PTH", "VIASFILLING"])
+        highlighted += highlight_lines_in_item_block(page, lines, 14, ["FINISH", "SOLDERRESIST"])
+        highlighted += highlight_split_sublines(page, lines)
+        highlighted += highlight_impedance_lines(page, lines)
+
+        if any("CONTAMINATION" in compact for *_unused, compact in lines):
+            highlighted += highlight_ionic_contamination_block(page, lines)
+
     return highlighted
 
 
@@ -286,37 +298,6 @@ def highlight_impedance_lines(page, lines) -> int:
     for _y_key, line_words, _line_text, compact in lines:
         if "IMPEDANCE" in compact:
             highlighted += highlight_line_words(page, line_words)
-    return highlighted
-
-
-def highlight_inspection_report(document) -> int:
-    """Surligne les items du tableau INSPECTION REPORT."""
-    logger.info("Surlignage INSPECTION REPORT")
-    highlighted = 0
-
-    full_item_lines = {1, 4, 5, 6, 12, 13, 18, 20, 21, 22, 24}
-    inspection_started = False
-
-    for page_num, page in enumerate(document):
-        text = page.get_text("text")
-        if not is_inspection_page(text, inspection_started):
-            continue
-        inspection_started = True
-        logger.info(f"Page {page_num + 1}: INSPECTION REPORT trouvé")
-
-        lines = sorted_text_lines(page)
-
-        for item_num in full_item_lines:
-            highlighted += highlight_inspection_item_line(page, lines, item_num)
-
-        highlighted += highlight_lines_in_item_block(page, lines, 8, ["PTH", "VIASFILLING"])
-        highlighted += highlight_lines_in_item_block(page, lines, 14, ["FINISH", "SOLDERRESIST"])
-        highlighted += highlight_split_sublines(page, lines)
-        highlighted += highlight_impedance_lines(page, lines)
-
-        if any("CONTAMINATION" in compact for *_unused, compact in lines):
-            highlighted += highlight_ionic_contamination_block(page, lines)
-
     return highlighted
 
 
@@ -516,6 +497,10 @@ def process():
 
         highlighted_paths: list[Path] = []
         processed_count = 0
+        warnings: list[str] = []
+        cover_rows: list[dict[str, str]] = []
+        standard_rows: list[dict[str, str]] = []
+        inspection_rows: list[dict[str, str]] = []
 
         for uploaded_file in pdf_files:
             original_name = uploaded_file.filename or "document.pdf"
@@ -530,8 +515,58 @@ def process():
                 highlighted_pdf_path = run_dir / "highlighted" / verified_pdf_name(original_name)
                 highlighted_count = process_pdf(pdf_path, highlighted_pdf_path, cover_terms)
                 highlighted_paths.append(highlighted_pdf_path)
-                processed_count += 1
                 
+                # --- EXTRACTION DES TABLEAUX AVEC TIMEOUT ---
+                import concurrent.futures
+                import threading
+                
+                def extract_tables():
+                    return extract_pdf_report(pdf_path, display_name=original_name)
+                
+                # Lancer l'extraction avec un timeout de 10 secondes
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(extract_tables)
+                    try:
+                        report = future.result(timeout=10)
+                        cover_rows.extend(report.cover_rows)
+                        standard_rows.extend(report.standard_rows)
+                        inspection_rows.extend(report.inspection_rows)
+                        
+                        # Générer les avertissements
+                        for row in report.cover_rows:
+                            if row.get("Champ") == "QUANTITY":
+                                continue
+                            if row.get("Comparaison") != "OK":
+                                warnings.append(
+                                    f"Page de garde: {row.get('Champ', 'Champ')} - fichier='{row.get('Valeur nom fichier', 'NA')}', "
+                                    f"PDF='{row.get('Valeur page de garde', 'NA')}' ({row.get('Comparaison', 'A VERIFIER')})"
+                                )
+                        
+                        has_ul94 = any(
+                            re.search(r"UL\s*94|94V-?0", row.get("Norme", ""), flags=re.IGNORECASE)
+                            for row in report.standard_rows
+                        )
+                        if not has_ul94 and report.standard_rows:
+                            warnings.append("Norme: UL 94 Flame Class 94V-0 introuvable")
+                        
+                        if not has_pdf_text(pdf_path, "HOLE WALL COPPER THICKNESS"):
+                            warnings.append("XSECTION: HOLE WALL COPPER THICKNESS introuvable")
+                        
+                        for row in report.inspection_rows:
+                            if row.get("Conformite") == "NON CONFORME":
+                                detail = (
+                                    f"Page {row.get('Page', 'NA')}: {row.get('TestName', 'NA')} - "
+                                    f"SPEC='{row.get('SPEC', 'NA')}', RESULTS='{row.get('RESULTS', 'NA')}'"
+                                )
+                                if row.get("Commentaire"):
+                                    detail += f" ({row.get('Commentaire')})"
+                                warnings.append(detail)
+                                
+                    except concurrent.futures.TimeoutError:
+                        warnings.append(f"Extraction des tableaux trop longue pour {original_name} (timeout)")
+                        logger.warning(f"Timeout extraction tableaux pour {original_name}")
+                
+                processed_count += 1
             except Exception as exc:
                 logger.error(f"Erreur: {exc}")
                 import traceback
@@ -558,10 +593,10 @@ def process():
             run_id=run_id,
             stats=stats,
             uploaded_names=uploaded_names,
-            warnings=[],
-            cover_rows=[],
-            standard_rows=[],
-            inspection_rows=[],
+            warnings=warnings,
+            cover_rows=cover_rows,
+            standard_rows=standard_rows,
+            inspection_rows=inspection_rows,
         )
     except Exception as e:
         logger.error(f"Erreur générale: {e}")
