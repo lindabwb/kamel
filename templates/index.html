@@ -57,7 +57,7 @@
 
     {% if warnings %}
     <section class="notice warning">
-      <strong>Points à vérifier dans le PDF source</strong>
+      <strong>Contrôles ciblés à vérifier</strong>
       <ul>
         {% for warning in warnings %}
         <li>{{ warning }}</li>
@@ -66,7 +66,7 @@
     </section>
     {% else %}
     <section class="notice success">
-      Aucun texte de non-conformité évident détecté dans le PDF source.
+      Aucun écart détecté sur les contrôles ciblés.
     </section>
     {% endif %}
     {% endif %}
