@@ -21,6 +21,7 @@ from pcb import (
     build_cover_comparison_rows,
     extract_cover_data,
     extract_cover_fields_by_position,
+    extract_pdf_report,
     parse_filename_values_from_name,
     value_or_na,
 )
@@ -120,6 +121,8 @@ def find_targeted_checks(pdf_path: Path, original_name: str) -> list[str]:
         )
         cover_rows, _cover_warnings = build_cover_comparison_rows(pdf_path, cover, original_name)
         for row in cover_rows:
+            if row.get("Champ") == "QUANTITY":
+                continue
             status = row.get("Comparaison", "A VERIFIER")
             if status != "OK":
                 findings.append(
@@ -135,6 +138,29 @@ def find_targeted_checks(pdf_path: Path, original_name: str) -> list[str]:
     except Exception as exc:
         logger.warning(f"Verification ciblee impossible pour {pdf_path.name}: {exc}")
         findings.append(f"Vérification automatique impossible pour {original_name}: {exc}")
+    return findings
+
+
+def find_table_nonconformities(pdf_path: Path, original_name: str) -> list[str]:
+    """Analyse les tableaux SPEC/RESULTS et remonte uniquement les NON CONFORME."""
+    findings: list[str] = []
+    try:
+        report = extract_pdf_report(pdf_path, display_name=original_name)
+        for row in report.inspection_rows:
+            if row.get("Conformite") != "NON CONFORME":
+                continue
+            test_name = row.get("TestName", "NA")
+            spec = row.get("SPEC", "NA")
+            results = row.get("RESULTS", "NA")
+            page = row.get("Page", "NA")
+            comment = row.get("Commentaire", "")
+            detail = f"Page {page}: {test_name} - SPEC='{spec}', RESULTS='{results}'"
+            if comment:
+                detail += f" ({comment})"
+            findings.append(detail)
+    except Exception as exc:
+        logger.warning(f"Verification tableaux impossible pour {pdf_path.name}: {exc}")
+        findings.append(f"Tableaux SPEC/RESULTS: vérification automatique impossible pour {original_name}: {exc}")
     return findings
 
 
@@ -580,6 +606,7 @@ def process():
                 highlighted_count = process_pdf(pdf_path, highlighted_pdf_path, cover_terms)
                 highlighted_paths.append(highlighted_pdf_path)
                 warnings.extend(find_targeted_checks(pdf_path, original_name))
+                warnings.extend(find_table_nonconformities(pdf_path, original_name))
                 processed_count += 1
             except Exception as exc:
                 logger.error(f"Erreur: {exc}")
