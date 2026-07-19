@@ -9,7 +9,7 @@ import webbrowser
 import zipfile
 import re
 import logging
-import signal
+import concurrent.futures
 from pathlib import Path
 
 import fitz
@@ -516,55 +516,47 @@ def process():
                 highlighted_count = process_pdf(pdf_path, highlighted_pdf_path, cover_terms)
                 highlighted_paths.append(highlighted_pdf_path)
                 
-                # --- EXTRACTION DES TABLEAUX AVEC TIMEOUT ---
-                import concurrent.futures
-                import threading
+                # --- EXTRACTION DES TABLEAUX ---
+                try:
+                    logger.info(f"Extraction des tableaux pour {original_name}...")
+                    report = extract_pdf_report(pdf_path, display_name=original_name)
+                    cover_rows.extend(report.cover_rows)
+                    standard_rows.extend(report.standard_rows)
+                    inspection_rows.extend(report.inspection_rows)
+                    logger.info(f"Extraction réussie: {len(report.inspection_rows)} lignes")
+                except Exception as e:
+                    logger.error(f"Erreur extraction tableaux: {e}")
+                    warnings.append(f"⚠️ Extraction des tableaux impossible pour {original_name}: {str(e)}")
                 
-                def extract_tables():
-                    return extract_pdf_report(pdf_path, display_name=original_name)
-                
-                # Lancer l'extraction avec un timeout de 10 secondes
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                    future = executor.submit(extract_tables)
-                    try:
-                        report = future.result(timeout=10)
-                        cover_rows.extend(report.cover_rows)
-                        standard_rows.extend(report.standard_rows)
-                        inspection_rows.extend(report.inspection_rows)
-                        
-                        # Générer les avertissements
-                        for row in report.cover_rows:
-                            if row.get("Champ") == "QUANTITY":
-                                continue
-                            if row.get("Comparaison") != "OK":
-                                warnings.append(
-                                    f"Page de garde: {row.get('Champ', 'Champ')} - fichier='{row.get('Valeur nom fichier', 'NA')}', "
-                                    f"PDF='{row.get('Valeur page de garde', 'NA')}' ({row.get('Comparaison', 'A VERIFIER')})"
-                                )
-                        
-                        has_ul94 = any(
-                            re.search(r"UL\s*94|94V-?0", row.get("Norme", ""), flags=re.IGNORECASE)
-                            for row in report.standard_rows
+                # Générer les avertissements
+                for row in cover_rows:
+                    if row.get("Champ") == "QUANTITY":
+                        continue
+                    if row.get("Comparaison") != "OK":
+                        warnings.append(
+                            f"Page de garde: {row.get('Champ', 'Champ')} - fichier='{row.get('Valeur nom fichier', 'NA')}', "
+                            f"PDF='{row.get('Valeur page de garde', 'NA')}' ({row.get('Comparaison', 'A VERIFIER')})"
                         )
-                        if not has_ul94 and report.standard_rows:
-                            warnings.append("Norme: UL 94 Flame Class 94V-0 introuvable")
-                        
-                        if not has_pdf_text(pdf_path, "HOLE WALL COPPER THICKNESS"):
-                            warnings.append("XSECTION: HOLE WALL COPPER THICKNESS introuvable")
-                        
-                        for row in report.inspection_rows:
-                            if row.get("Conformite") == "NON CONFORME":
-                                detail = (
-                                    f"Page {row.get('Page', 'NA')}: {row.get('TestName', 'NA')} - "
-                                    f"SPEC='{row.get('SPEC', 'NA')}', RESULTS='{row.get('RESULTS', 'NA')}'"
-                                )
-                                if row.get("Commentaire"):
-                                    detail += f" ({row.get('Commentaire')})"
-                                warnings.append(detail)
-                                
-                    except concurrent.futures.TimeoutError:
-                        warnings.append(f"Extraction des tableaux trop longue pour {original_name} (timeout)")
-                        logger.warning(f"Timeout extraction tableaux pour {original_name}")
+                
+                has_ul94 = any(
+                    re.search(r"UL\s*94|94V-?0", row.get("Norme", ""), flags=re.IGNORECASE)
+                    for row in standard_rows
+                )
+                if not has_ul94 and standard_rows:
+                    warnings.append("Norme: UL 94 Flame Class 94V-0 introuvable")
+                
+                if not has_pdf_text(pdf_path, "HOLE WALL COPPER THICKNESS"):
+                    warnings.append("XSECTION: HOLE WALL COPPER THICKNESS introuvable")
+                
+                for row in inspection_rows:
+                    if row.get("Conformite") == "NON CONFORME":
+                        detail = (
+                            f"Page {row.get('Page', 'NA')}: {row.get('TestName', 'NA')} - "
+                            f"SPEC='{row.get('SPEC', 'NA')}', RESULTS='{row.get('RESULTS', 'NA')}'"
+                        )
+                        if row.get("Commentaire"):
+                            detail += f" ({row.get('Commentaire')})"
+                        warnings.append(detail)
                 
                 processed_count += 1
             except Exception as exc:

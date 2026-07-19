@@ -91,3 +91,109 @@
 2026-07-19 19:29:46,847 - INFO - 127.0.0.1 - - [19/Jul/2026 19:29:46] "[36mGET /static/styles.css HTTP/1.1[0m" 304 -
 2026-07-19 19:29:46,849 - INFO - 127.0.0.1 - - [19/Jul/2026 19:29:46] "[36mGET /static/app.js HTTP/1.1[0m" 304 -
 2026-07-19 19:29:51,891 - INFO - 127.0.0.1 - - [19/Jul/2026 19:29:51] "GET /download-highlighted/e11a0ee19ee84cb0a5be0c540e07b6dc HTTP/1.1" 200 -
+2026-07-19 19:32:52,175 - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2026-07-19 19:32:52,176 - INFO - [33mPress CTRL+C to quit[0m
+2026-07-19 19:32:55,614 - INFO - 127.0.0.1 - - [19/Jul/2026 19:32:55] "GET / HTTP/1.1" 200 -
+2026-07-19 19:32:56,030 - INFO - 127.0.0.1 - - [19/Jul/2026 19:32:56] "[36mGET /static/styles.css HTTP/1.1[0m" 304 -
+2026-07-19 19:32:56,031 - INFO - 127.0.0.1 - - [19/Jul/2026 19:32:56] "[36mGET /static/app.js HTTP/1.1[0m" 304 -
+2026-07-19 19:32:56,130 - INFO - 127.0.0.1 - - [19/Jul/2026 19:32:56] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+2026-07-19 19:33:01,970 - INFO - === Traitement de AC00000486B-1023870-2PCS-2624-Unitech_Nantong_A95P019.pdf ===
+2026-07-19 19:33:02,267 - INFO - PDF ouvert avec 21 pages
+2026-07-19 19:33:02,269 - INFO - Surlignage page de garde avec 6 termes
+2026-07-19 19:33:02,574 - INFO - Surlignage INSPECTION REPORT
+2026-07-19 19:33:02,625 - INFO - Page 8: INSPECTION REPORT trouvé
+2026-07-19 19:33:02,962 - INFO - Page 9: INSPECTION REPORT trouvé
+2026-07-19 19:33:03,326 - INFO - Page 10: INSPECTION REPORT trouvé
+2026-07-19 19:33:03,635 - INFO - Surlignage HOLE SIZE
+2026-07-19 19:33:03,691 - INFO - Page 11: HOLE SIZE trouvé
+2026-07-19 19:33:03,725 - INFO - HOLE SIZE: 1 ligne surlignée
+2026-07-19 19:33:03,726 - INFO - Surlignage TABLEAU DES DIMENSIONS
+2026-07-19 19:33:03,773 - INFO - Page 8: Tableau des dimensions trouvé
+2026-07-19 19:33:03,794 - INFO - Page 9: Tableau des dimensions trouvé
+2026-07-19 19:33:03,815 - INFO - Page 11: Tableau des dimensions trouvé
+2026-07-19 19:33:03,828 - INFO - Page 12: Tableau des dimensions trouvé
+2026-07-19 19:33:03,837 - INFO - Meilleure ligne trouvée avec valeur 228.28
+2026-07-19 19:33:03,899 - INFO - Surlignage XSECTION
+2026-07-19 19:33:03,975 - INFO - Surlignage STACKUP
+2026-07-19 19:33:04,048 - INFO - Page 20: STACKUP trouvé
+2026-07-19 19:33:05,932 - INFO - STACKUP: 226 surlignages
+2026-07-19 19:33:05,932 - INFO - Total surlignages: 366
+2026-07-19 19:33:06,255 - INFO - PDF sauvegardé: C:\Users\linda\Downloads\kamel\web_reports\bd75f643d7fc4995857ebdbdc9934be4\highlighted\AC00000486B-1023870-2PCS-2624-Unitech (Nantong)  A95P019V.pdf
+2026-07-19 19:33:14,485 - INFO - 127.0.0.1 - - [19/Jul/2026 19:33:14] "POST /process HTTP/1.1" 200 -
+2026-07-19 19:33:14,570 - INFO - 127.0.0.1 - - [19/Jul/2026 19:33:14] "[36mGET /static/styles.css HTTP/1.1[0m" 304 -
+2026-07-19 19:33:14,589 - INFO - 127.0.0.1 - - [19/Jul/2026 19:33:14] "[36mGET /static/app.js HTTP/1.1[0m" 304 -
+2026-07-19 19:33:38,358 - INFO - === Traitement de 1032-111-01_C473719011198PCS2620Unitech_Nantong.pdf ===
+2026-07-19 19:33:38,399 - INFO - PDF ouvert avec 14 pages
+2026-07-19 19:33:38,400 - INFO - Surlignage page de garde avec 6 termes
+2026-07-19 19:33:38,586 - INFO - Surlignage INSPECTION REPORT
+2026-07-19 19:33:38,623 - INFO - Page 8: INSPECTION REPORT trouvé
+2026-07-19 19:33:39,183 - INFO - Page 9: INSPECTION REPORT trouvé
+2026-07-19 19:33:39,584 - INFO - Surlignage HOLE SIZE
+2026-07-19 19:33:39,632 - INFO - Page 10: HOLE SIZE trouvé
+2026-07-19 19:33:39,706 - INFO - HOLE SIZE: 1 ligne surlignée
+2026-07-19 19:33:39,706 - INFO - Surlignage TABLEAU DES DIMENSIONS
+2026-07-19 19:33:39,751 - INFO - Page 8: Tableau des dimensions trouvé
+2026-07-19 19:33:39,767 - INFO - Page 9: Tableau des dimensions trouvé
+2026-07-19 19:33:39,781 - INFO - Page 10: Tableau des dimensions trouvé
+2026-07-19 19:33:39,796 - INFO - Page 11: Tableau des dimensions trouvé
+2026-07-19 19:33:39,809 - INFO - Meilleure ligne trouvée avec valeur 154.3
+2026-07-19 19:33:39,868 - INFO - Surlignage XSECTION
+2026-07-19 19:33:39,947 - INFO - Surlignage STACKUP
+2026-07-19 19:33:40,365 - INFO - Page 14: STACKUP trouvé
+2026-07-19 19:33:41,270 - INFO - STACKUP: 176 surlignages
+2026-07-19 19:33:41,270 - INFO - Total surlignages: 328
+2026-07-19 19:33:41,317 - INFO - PDF sauvegardé: C:\Users\linda\Downloads\kamel\web_reports\f255543011d74179be357b4966f5de5e\highlighted\1032-111-01 C4—7371901—1198PCS—2620—Unitech (Nantong)V.pdf
+2026-07-19 19:33:48,532 - INFO - 127.0.0.1 - - [19/Jul/2026 19:33:48] "POST /process HTTP/1.1" 200 -
+2026-07-19 19:33:48,854 - INFO - 127.0.0.1 - - [19/Jul/2026 19:33:48] "[36mGET /static/styles.css HTTP/1.1[0m" 304 -
+2026-07-19 19:33:48,940 - INFO - 127.0.0.1 - - [19/Jul/2026 19:33:48] "[36mGET /static/app.js HTTP/1.1[0m" 304 -
+2026-07-19 19:33:54,118 - INFO - 127.0.0.1 - - [19/Jul/2026 19:33:54] "GET /download-highlighted/f255543011d74179be357b4966f5de5e HTTP/1.1" 200 -
+2026-07-19 19:34:22,584 - INFO - === Traitement de AC00000486B-1023870-2PCS-2624-Unitech_Nantong_A95P019.pdf ===
+2026-07-19 19:34:22,642 - INFO - PDF ouvert avec 21 pages
+2026-07-19 19:34:22,643 - INFO - Surlignage page de garde avec 6 termes
+2026-07-19 19:34:22,835 - INFO - Surlignage INSPECTION REPORT
+2026-07-19 19:34:22,869 - INFO - Page 8: INSPECTION REPORT trouvé
+2026-07-19 19:34:23,331 - INFO - Page 9: INSPECTION REPORT trouvé
+2026-07-19 19:34:23,523 - INFO - Page 10: INSPECTION REPORT trouvé
+2026-07-19 19:34:23,581 - INFO - Surlignage HOLE SIZE
+2026-07-19 19:34:23,630 - INFO - Page 11: HOLE SIZE trouvé
+2026-07-19 19:34:23,668 - INFO - HOLE SIZE: 1 ligne surlignée
+2026-07-19 19:34:23,669 - INFO - Surlignage TABLEAU DES DIMENSIONS
+2026-07-19 19:34:23,702 - INFO - Page 8: Tableau des dimensions trouvé
+2026-07-19 19:34:23,718 - INFO - Page 9: Tableau des dimensions trouvé
+2026-07-19 19:34:23,730 - INFO - Page 11: Tableau des dimensions trouvé
+2026-07-19 19:34:23,739 - INFO - Page 12: Tableau des dimensions trouvé
+2026-07-19 19:34:23,747 - INFO - Meilleure ligne trouvée avec valeur 228.28
+2026-07-19 19:34:23,797 - INFO - Surlignage XSECTION
+2026-07-19 19:34:23,859 - INFO - Surlignage STACKUP
+2026-07-19 19:34:23,915 - INFO - Page 20: STACKUP trouvé
+2026-07-19 19:34:25,078 - INFO - STACKUP: 226 surlignages
+2026-07-19 19:34:25,079 - INFO - Total surlignages: 366
+2026-07-19 19:34:25,164 - INFO - PDF sauvegardé: C:\Users\linda\Downloads\kamel\web_reports\51ac029b6bfe4702abacc4f7c9675c8c\highlighted\AC00000486B-1023870-2PCS-2624-Unitech (Nantong)  A95P019V.pdf
+2026-07-19 19:34:33,461 - INFO - 127.0.0.1 - - [19/Jul/2026 19:34:33] "POST /process HTTP/1.1" 200 -
+2026-07-19 19:34:33,553 - INFO - 127.0.0.1 - - [19/Jul/2026 19:34:33] "[36mGET /static/styles.css HTTP/1.1[0m" 304 -
+2026-07-19 19:34:33,555 - INFO - 127.0.0.1 - - [19/Jul/2026 19:34:33] "[36mGET /static/app.js HTTP/1.1[0m" 304 -
+2026-07-19 19:38:31,000 - INFO - === Traitement de 1032-111-01_C473719011198PCS2620Unitech_Nantong.pdf ===
+2026-07-19 19:38:31,120 - INFO - PDF ouvert avec 14 pages
+2026-07-19 19:38:31,121 - INFO - Surlignage page de garde avec 6 termes
+2026-07-19 19:38:31,319 - INFO - Surlignage INSPECTION REPORT
+2026-07-19 19:38:31,352 - INFO - Page 8: INSPECTION REPORT trouvé
+2026-07-19 19:38:31,575 - INFO - Page 9: INSPECTION REPORT trouvé
+2026-07-19 19:38:31,905 - INFO - Surlignage HOLE SIZE
+2026-07-19 19:38:31,948 - INFO - Page 10: HOLE SIZE trouvé
+2026-07-19 19:38:31,986 - INFO - HOLE SIZE: 1 ligne surlignée
+2026-07-19 19:38:31,987 - INFO - Surlignage TABLEAU DES DIMENSIONS
+2026-07-19 19:38:32,033 - INFO - Page 8: Tableau des dimensions trouvé
+2026-07-19 19:38:32,047 - INFO - Page 9: Tableau des dimensions trouvé
+2026-07-19 19:38:32,064 - INFO - Page 10: Tableau des dimensions trouvé
+2026-07-19 19:38:32,077 - INFO - Page 11: Tableau des dimensions trouvé
+2026-07-19 19:38:32,091 - INFO - Meilleure ligne trouvée avec valeur 154.3
+2026-07-19 19:38:32,337 - INFO - Surlignage XSECTION
+2026-07-19 19:38:32,426 - INFO - Surlignage STACKUP
+2026-07-19 19:38:32,472 - INFO - Page 14: STACKUP trouvé
+2026-07-19 19:38:33,212 - INFO - STACKUP: 176 surlignages
+2026-07-19 19:38:33,213 - INFO - Total surlignages: 328
+2026-07-19 19:38:33,247 - INFO - PDF sauvegardé: C:\Users\linda\Downloads\kamel\web_reports\1f5e9f0d1a9c458b97711a7429c37f63\highlighted\1032-111-01 C4—7371901—1198PCS—2620—Unitech (Nantong)V.pdf
+2026-07-19 19:38:41,545 - INFO - 127.0.0.1 - - [19/Jul/2026 19:38:41] "POST /process HTTP/1.1" 200 -
+2026-07-19 19:38:41,600 - INFO - 127.0.0.1 - - [19/Jul/2026 19:38:41] "[36mGET /static/styles.css HTTP/1.1[0m" 304 -
+2026-07-19 19:38:41,601 - INFO - 127.0.0.1 - - [19/Jul/2026 19:38:41] "[36mGET /static/app.js HTTP/1.1[0m" 304 -
