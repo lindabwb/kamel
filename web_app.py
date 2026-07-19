@@ -114,7 +114,6 @@ def highlight_ul94(document) -> int:
 def get_inspection_items_with_coordinates(pdf_path: Path) -> dict:
     """
     Extrait les items du tableau INSPECTION REPORT avec leurs coordonnées précises.
-    Retourne: {item_num: {"page": page_num, "y0": y0, "y1": y1, "text": text}}
     """
     items = {}
     
@@ -124,7 +123,6 @@ def get_inspection_items_with_coordinates(pdf_path: Path) -> dict:
             if "INSPECTION REPORT" not in text:
                 continue
             
-            # Extraire les mots avec leurs coordonnées
             words = page.extract_words(use_text_flow=False, keep_blank_chars=False)
             
             # Grouper les mots par ligne
@@ -136,16 +134,13 @@ def get_inspection_items_with_coordinates(pdf_path: Path) -> dict:
                     lines[key] = []
                 lines[key].append(word)
             
-            # Trier les lignes
             sorted_keys = sorted(lines.keys())
             
-            # Pour chaque ligne, vérifier si elle commence par un numéro d'item
             for y_key in sorted_keys:
                 line_words = sorted(lines[y_key], key=lambda w: w["x0"])
                 line_text = " ".join(w["text"] for w in line_words)
                 line_text_clean = re.sub(r'\s+', ' ', line_text).strip()
                 
-                # Vérifier si la ligne commence par un numéro
                 match = re.match(r"^(\d+)", line_text_clean)
                 if match:
                     item_num = int(match.group(1))
@@ -157,7 +152,7 @@ def get_inspection_items_with_coordinates(pdf_path: Path) -> dict:
                         "words": line_words
                     }
                 
-                # Cas spécial: item 8 avec ses sous-lignes (PTH, BVH, IVH, Vias)
+                # Cas spécial: item 8
                 if "8" in line_text_clean and ("PTH" in line_text_clean or "BVH" in line_text_clean or "IVH" in line_text_clean or "Vias" in line_text_clean):
                     if 8 not in items:
                         items[8] = {
@@ -168,14 +163,13 @@ def get_inspection_items_with_coordinates(pdf_path: Path) -> dict:
                             "words": line_words
                         }
                     else:
-                        # Étendre la zone de l'item 8
                         items[8]["y0"] = min(items[8]["y0"], min(w["top"] for w in line_words))
                         items[8]["y1"] = max(items[8]["y1"], max(w["bottom"] for w in line_words))
                         items[8]["text"] += " " + line_text_clean
                         items[8]["words"].extend(line_words)
                 
-                # Cas spécial: item 23 avec ses sous-lignes
-                if "23" in line_text_clean and ("10321310" in line_text_clean or "AFTER" in line_text_clean or "INOIC" in line_text_clean):
+                # Cas spécial: item 23
+                if "23" in line_text_clean and ("10321310" in line_text_clean or "AFTER" in line_text_clean or "INOIC" in line_text_clean or "IONIC" in line_text_clean):
                     if 23 not in items:
                         items[23] = {
                             "page": page_num,
@@ -189,6 +183,10 @@ def get_inspection_items_with_coordinates(pdf_path: Path) -> dict:
                         items[23]["y1"] = max(items[23]["y1"], max(w["bottom"] for w in line_words))
                         items[23]["text"] += " " + line_text_clean
                         items[23]["words"].extend(line_words)
+                
+                # Items 18, 20, 21, 22
+                if item_num in [18, 20, 21, 22]:
+                    pass
     
     return items
 
@@ -197,16 +195,13 @@ def highlight_inspection_report_with_coordinates(document: fitz.Document, pdf_pa
     """Utilise les coordonnées extraites par pdfplumber pour surligner."""
     highlighted = 0
     
-    # Extraire les items avec leurs coordonnées
     items = get_inspection_items_with_coordinates(pdf_path)
     
     if not items:
         return 0
     
-    # Items cibles
     target_items = [1, 4, 5, 6, 8, 12, 13, 14, 18, 20, 21, 22, 23, 24]
     
-    # Pour chaque item cible
     for item_num in target_items:
         if item_num not in items:
             continue
@@ -219,15 +214,11 @@ def highlight_inspection_report_with_coordinates(document: fitz.Document, pdf_pa
         
         page = document[page_num]
         
-        # Pour chaque mot de l'item, surligner
         for word in item_data["words"]:
-            # Convertir les coordonnées pdfplumber en fitz
             x0 = word["x0"]
             y0 = word["top"]
             x1 = word["x1"]
             y1 = word["bottom"]
-            
-            # Ajouter une marge pour être sûr de surligner tout le mot
             rect = fitz.Rect(x0, y0 - 1, x1, y1 + 1)
             add_highlight_rect(page, rect)
             highlighted += 1
@@ -276,44 +267,65 @@ def highlight_hole_size(document) -> int:
 
 
 def highlight_dimension_table(document) -> int:
-    """Surligne la ligne avec la plus grande valeur DRW. DIMENSION."""
-    for page in document:
+    """Surligne la ligne avec la plus grande valeur DRW. DIMENSION dans le tableau ITEM/DRW.DIMENSION."""
+    
+    for page_num, page in enumerate(document):
         text = page.get_text("text")
-        if "DRW. DIMENSION" not in text and "RESULTS" not in text:
+        if "DRW. DIMENSION" not in text and "UNIT : MM" not in text:
             continue
-
-        words = page.get_text("words")
-        best_line = None
-        best_value = -1.0
-
-        for i, word in enumerate(words):
-            word_text = word[4].strip()
-            if "±" in word_text or "+/-" in word_text:
-                match = re.search(r"(\d+[.,]\d+)", word_text)
-                if match:
-                    try:
-                        value = float(match.group(1).replace(",", "."))
-                        if value > best_value:
-                            mid_y = (word[1] + word[3]) / 2
-                            line_words = []
-                            for w in words:
-                                w_mid = (w[1] + w[3]) / 2
-                                if abs(w_mid - mid_y) <= 5:
-                                    line_words.append(w)
-                            if line_words:
-                                line_text = " ".join(w[4] for w in line_words)
-                                if "ITEM" in line_text or re.search(r"\d+\s*[±]", line_text):
+        
+        # Utiliser pdfplumber pour extraire le tableau
+        with pdfplumber.open(document.name) as pdf:
+            if page_num >= len(pdf.pages):
+                continue
+            pdf_page = pdf.pages[page_num]
+            
+            # Extraire les mots avec coordonnées
+            words = pdf_page.extract_words(use_text_flow=False, keep_blank_chars=False)
+            
+            # Grouper par ligne
+            lines = {}
+            for word in words:
+                mid_y = (word["top"] + word["bottom"]) / 2
+                key = round(mid_y / 2) * 2
+                if key not in lines:
+                    lines[key] = []
+                lines[key].append(word)
+            
+            # Chercher la ligne avec la plus grande valeur
+            best_line = None
+            best_value = -1.0
+            
+            for y_key in sorted(lines.keys()):
+                line_words = sorted(lines[y_key], key=lambda w: w["x0"])
+                line_text = " ".join(w["text"] for w in line_words)
+                
+                # Chercher une ligne qui contient "±" ou "+/-" et un nombre
+                if "±" in line_text or "+/-" in line_text:
+                    # Extraire la première valeur numérique avec ±
+                    match = re.search(r"(\d+[.,]\d+)\s*[±]", line_text)
+                    if match:
+                        try:
+                            value = float(match.group(1).replace(",", "."))
+                            if value > best_value:
+                                # Vérifier que c'est une ligne de dimension (contient ITEM ou un numéro)
+                                if re.match(r"^\d+", line_text.strip()):
                                     best_line = line_words
                                     best_value = value
-                    except ValueError:
-                        continue
-
-        if best_line:
-            for word in best_line:
-                if word[4].strip():
-                    add_highlight_rect(page, fitz.Rect(word[0], word[1], word[2], word[3]))
-            return 1
-
+                        except ValueError:
+                            continue
+            
+            if best_line:
+                # Surligner tous les mots de la ligne
+                for word in best_line:
+                    x0 = word["x0"]
+                    y0 = word["top"]
+                    x1 = word["x1"]
+                    y1 = word["bottom"]
+                    rect = fitz.Rect(x0, y0 - 1, x1, y1 + 1)
+                    add_highlight_rect(page, rect)
+                return 1
+    
     return 0
 
 
@@ -385,7 +397,7 @@ def process_pdf(source_pdf: Path, output_pdf: Path, cover_terms: list[str]) -> i
     # 4. Tableau HOLE SIZE
     highlighted += highlight_hole_size(document)
 
-    # 5. Tableau des dimensions
+    # 5. Tableau des dimensions (ITEM / DRW. DIMENSION)
     highlighted += highlight_dimension_table(document)
 
     # 6. XSECTION REPORT
