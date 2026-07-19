@@ -539,7 +539,7 @@ def evaluate_conformity(spec: str, result: str) -> tuple[str, str]:
     """
     Évalue la conformité entre une spécification et un résultat.
     Gère maintenant:
-    - Impédance avec tolérance ±10%
+    - Impédance avec tolérance ±10% (avec ou sans espaces)
     - AVG (moyenne) avec valeur minimale
     - Stack up (follow stack up 1/1oz)
     - Trous bouchés (PLUGGED, NPTH)
@@ -552,12 +552,13 @@ def evaluate_conformity(spec: str, result: str) -> tuple[str, str]:
     result_upper = result_clean.upper()
 
     # --- RÈGLE 1: IMPEDANCE ---
-    # Pour "L1 (90)Ω" / "88.34 | Ω"
-    # ou "L10: (90)Ω" / "86.1 | Ω"
-    # ou "L1: (95)Ω" / "85.31 | Ω"
-    if "IMPEDANCE" in spec_upper or ("Ω" in spec_clean and re.search(r"\(\d+\)", spec_clean)):
-        # Extraire la valeur cible entre parenthèses
-        target_match = re.search(r"\((\d+)\)", spec_clean)
+    # Pour "L1 ( 90 )Ω" / "88.34 | Ω"
+    # ou "L10: ( 90 )Ω" / "86.1 | Ω"
+    # ou "L1: ( 95 )Ω" / "85.31 | Ω"
+    # Détecter IMPEDANCE dans le nom du test OU présence de Ω avec des parenthèses
+    if "IMPEDANCE" in spec_upper or ("Ω" in spec_clean and re.search(r"\(\s*\d+\s*\)", spec_clean)):
+        # Extraire la valeur cible entre parenthèses (avec ou sans espaces)
+        target_match = re.search(r"\(\s*(\d+)\s*\)", spec_clean)
         if target_match:
             target = float(target_match.group(1))
             # Extraire les valeurs mesurées
