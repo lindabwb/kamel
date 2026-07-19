@@ -108,6 +108,33 @@ def get_text_lines(page, tolerance: float = 3.0) -> dict[float, list[tuple[float
     return lines
 
 
+def sorted_text_lines(page) -> list[tuple[float, list[tuple[float, float, float, float, str]], str, str]]:
+    """Retourne les lignes visuelles triées: y, mots, texte, texte compact."""
+    lines = []
+    for y_key, words in get_text_lines(page).items():
+        line_words = sorted(words, key=lambda w: w[0])
+        line_text = " ".join(w[4] for w in line_words)
+        compact = re.sub(r"[^A-Z0-9]+", "", line_text.upper())
+        lines.append((y_key, line_words, line_text, compact))
+    return sorted(lines, key=lambda item: item[0])
+
+
+def highlight_line_words(page, line_words: list[tuple[float, float, float, float, str]]) -> int:
+    highlighted = 0
+    for word in line_words:
+        if word[4].strip():
+            add_highlight_rect(page, fitz.Rect(word[0], word[1], word[2], word[3]))
+            highlighted += 1
+    return highlighted
+
+
+def line_item_number(line_text: str) -> int | None:
+    if re.match(r"^\s*\d{1,2}\s+(ARRAY|PNL)\b", line_text, flags=re.IGNORECASE):
+        return None
+    match = re.match(r"^\s*(\d{1,2})(?:\s|$)", line_text)
+    return int(match.group(1)) if match else None
+
+
 def highlight_cover_page(document, cover_terms: list[str]) -> int:
     """Surligne les termes de la page de garde."""
     logger.info(f"Surlignage page de garde avec {len(cover_terms)} termes")
@@ -160,46 +187,99 @@ def highlight_table_by_item_numbers(document, page_num, target_items, page) -> i
     return highlighted
 
 
+def is_inspection_page(text: str, inspection_started: bool) -> bool:
+    upper = text.upper()
+    if "HOLE SIZE" in upper or "ARTICLE XSECTION" in upper or "STACKUP" in upper:
+        return False
+    if "INSPECTION REPORT" in upper:
+        return True
+    return inspection_started and (
+        "ITEM DESCRIPTION" in upper
+        or "WARP" in upper
+        or "IMPEDANCE" in upper
+        or "INOIC" in upper
+        or "IONIC" in upper
+        or "SOLDER MASK THICKNESS" in upper
+        or "GOLD THICKNESS" in upper
+        or "NICKEL THICKNESS" in upper
+    )
+
+
+def highlight_inspection_item_line(page, lines, item_num: int) -> int:
+    highlighted = 0
+    for _y_key, line_words, line_text, _compact in lines:
+        if line_item_number(line_text) == item_num:
+            highlighted += highlight_line_words(page, line_words)
+    return highlighted
+
+
+def highlight_lines_in_item_block(page, lines, item_num: int, required_compacts: list[str]) -> int:
+    highlighted = 0
+    in_block = False
+    for _y_key, line_words, line_text, compact in lines:
+        current_item = line_item_number(line_text)
+        if current_item == item_num:
+            in_block = True
+        elif current_item is not None and in_block:
+            break
+
+        if not in_block:
+            continue
+        if any(required in compact for required in required_compacts):
+            highlighted += highlight_line_words(page, line_words)
+    return highlighted
+
+
+def highlight_ionic_contamination_block(page, lines) -> int:
+    highlighted = 0
+    for _y_key, line_words, line_text, compact in lines:
+        is_ionic_line = any(term in compact for term in ["INOIC", "IONIC", "CONTAMINATION", "10321310", "1B2B1", "AFTERFINISH", "GR78CORE", "NACL"])
+        if is_ionic_line or re.fullmatch(r"\s*23\s*", line_text):
+            highlighted += highlight_line_words(page, line_words)
+    return highlighted
+
+
+def highlight_split_sublines(page, lines) -> int:
+    """Surligne les sous-lignes que le PDF place parfois avant le numéro d'item."""
+    highlighted = 0
+    for _y_key, line_words, line_text, compact in lines:
+        stripped = line_text.strip().upper()
+        if stripped == "PTH":
+            highlighted += highlight_line_words(page, line_words)
+            continue
+        if compact.startswith("FINISH") and "NOPEELING" in compact and "TAPE" not in compact and "COPPER" not in compact:
+            highlighted += highlight_line_words(page, line_words)
+            continue
+    return highlighted
+
+
 def highlight_inspection_report(document) -> int:
     """Surligne les items du tableau INSPECTION REPORT."""
     logger.info("Surlignage INSPECTION REPORT")
     highlighted = 0
-    
-    target_items = [1, 4, 5, 6, 8, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
-    
+
+    full_item_lines = {1, 4, 5, 6, 12, 13, 18, 20, 21, 22, 24}
+    inspection_started = False
+
     for page_num, page in enumerate(document):
         text = page.get_text("text")
-        if "INSPECTION REPORT" not in text:
+        if not is_inspection_page(text, inspection_started):
             continue
-        
+        inspection_started = True
         logger.info(f"Page {page_num + 1}: INSPECTION REPORT trouvé")
-        
-        # Surligner les items par leur numéro
-        highlighted += highlight_table_by_item_numbers(document, page_num, target_items, page)
-        
-        # Cas spéciaux: sous-lignes (PTH, BVH, IVH, Vias, Finish, Solder resist, 10321310, AFTER FINISH)
-        lines = get_text_lines(page)
-        for y_key in sorted(lines.keys()):
-            line_words = sorted(lines[y_key], key=lambda w: w[0])
-            line_text = " ".join(w[4] for w in line_words)
-            
-            # Chercher les sous-lignes
-            if re.search(r"(PTH|BVH|IVH|Vias|Finish|Solder.*resist|10321310|AFTER.*FINISH|IONIC|INOIC)", line_text, re.IGNORECASE):
-                # Vérifier si c'est une sous-ligne d'un item
-                for prev_key in sorted([k for k in lines.keys() if k < y_key], reverse=True):
-                    prev_words = sorted(lines[prev_key], key=lambda w: w[0])
-                    prev_text = " ".join(w[4] for w in prev_words)
-                    match = re.match(r"^(\d+)", prev_text.strip())
-                    if match:
-                        item_num = int(match.group(1))
-                        if item_num in [8, 14, 23]:
-                            logger.info(f"Sous-ligne de l'item {item_num} trouvée")
-                            for word in line_words:
-                                if word[4].strip():
-                                    add_highlight_rect(page, fitz.Rect(word[0], word[1], word[2], word[3]))
-                                    highlighted += 1
-                            break
-    
+
+        lines = sorted_text_lines(page)
+
+        for item_num in full_item_lines:
+            highlighted += highlight_inspection_item_line(page, lines, item_num)
+
+        highlighted += highlight_lines_in_item_block(page, lines, 8, ["PTH", "VIASFILLING"])
+        highlighted += highlight_lines_in_item_block(page, lines, 14, ["FINISH", "SOLDERRESIST"])
+        highlighted += highlight_split_sublines(page, lines)
+
+        if any("CONTAMINATION" in compact for *_unused, compact in lines):
+            highlighted += highlight_ionic_contamination_block(page, lines)
+
     return highlighted
 
 
