@@ -23,28 +23,31 @@
     {% endif %}
 
     <section class="upload-panel">
-      <form action="{{ url_for('process') }}" method="post" enctype="multipart/form-data">
+      <form id="uploadForm" action="{{ url_for('process') }}" method="post" enctype="multipart/form-data">
         <label class="dropzone">
           <input id="pdfInput" type="file" name="pdfs" accept=".pdf" multiple required>
           <span class="drop-title">Choisir ou déposer des PDF</span>
           <span class="drop-copy">Plusieurs fichiers peuvent être traités en une seule fois.</span>
           <span id="selectedFiles" class="selected-files">Aucun fichier sélectionné</span>
         </label>
-        <button id="analyzeButton" class="button primary" type="submit" disabled>Analyser</button>
+        <div class="actions">
+          <button id="analyzeButton" class="button primary" type="submit" disabled>Analyser et préparer le PDF</button>
+        </div>
       </form>
     </section>
 
     {% if processed %}
     <section class="files-panel">
       <div class="files-header">
-        <strong>Fichiers analysés</strong>
-        <a class="button secondary" href="{{ url_for('download_highlighted', run_id=run_id) }}">
-          Télécharger PDF surligné
+        <div>
+          <strong>PDF prêt</strong>
+          <p class="files-note">Téléchargez la version surlignée, avec V ajouté au nom du fichier.</p>
+        </div>
+        <a class="button download" href="{{ url_for('download_highlighted', run_id=run_id) }}">
+          Télécharger le PDF surligné
         </a>
       </div>
-      <p class="files-note">
-        Le PDF surligné applique les règles fixes: quantité en page de garde, UL 94V-0, lignes techniques ciblées, hole size, plus grande dimension, hole wall copper thickness et stack-up. Le nom téléchargé finit par V.
-      </p>
+      <strong class="files-label">Fichiers traités</strong>
       <ul>
         {% for name in uploaded_names %}
         <li>{{ name }}</li>
@@ -52,20 +55,18 @@
       </ul>
     </section>
 
-    <section class="summary-grid" aria-label="Résumé">
-      <div class="metric"><span>PDF</span><strong>{{ stats.pdf_count }}</strong></div>
-      <div class="metric"><span>PDF modifiés</span><strong>{{ stats.highlighted_count }}</strong></div>
-      <div class="metric ok"><span>Lignes ciblées</span><strong>{{ stats.sampled_count }}</strong></div>
-    </section>
-
     {% if warnings %}
     <section class="notice warning">
-      <strong>Alertes</strong>
+      <strong>Points à vérifier dans le PDF source</strong>
       <ul>
         {% for warning in warnings %}
         <li>{{ warning }}</li>
         {% endfor %}
       </ul>
+    </section>
+    {% else %}
+    <section class="notice success">
+      Aucun texte de non-conformité évident détecté dans le PDF source.
     </section>
     {% endif %}
     {% endif %}

@@ -85,6 +85,25 @@ def cover_terms_from_filename(filename: str) -> list[str]:
     return list(dict.fromkeys(terms))
 
 
+def find_nonconforming_lines(pdf_path: Path) -> list[str]:
+    """Repere rapidement les lignes du PDF qui signalent un probleme."""
+    markers = ["NON CONFORME", "NON-CONFORME", "FAIL", "FAILED", "NG", "REJECT"]
+    findings: list[str] = []
+    try:
+        with fitz.open(pdf_path) as document:
+            for page_index, page in enumerate(document, start=1):
+                for raw_line in page.get_text("text").splitlines():
+                    line = " ".join(raw_line.split())
+                    upper = line.upper()
+                    if not line:
+                        continue
+                    if any(marker in upper for marker in markers):
+                        findings.append(f"Page {page_index}: {line}")
+    except Exception as exc:
+        logger.warning(f"Detection non-conformites impossible pour {pdf_path.name}: {exc}")
+    return findings
+
+
 def add_highlight_rect(page, rect, color=(1, 0.86, 0.18)) -> None:
     """Ajoute un surlignage sur un rectangle."""
     try:
@@ -511,6 +530,7 @@ def process():
 
         highlighted_paths: list[Path] = []
         processed_count = 0
+        warnings: list[str] = []
 
         for uploaded_file in pdf_files:
             original_name = uploaded_file.filename or "document.pdf"
@@ -525,6 +545,7 @@ def process():
                 highlighted_pdf_path = run_dir / "highlighted" / verified_pdf_name(original_name)
                 highlighted_count = process_pdf(pdf_path, highlighted_pdf_path, cover_terms)
                 highlighted_paths.append(highlighted_pdf_path)
+                warnings.extend(find_nonconforming_lines(pdf_path))
                 processed_count += 1
             except Exception as exc:
                 logger.error(f"Erreur: {exc}")
@@ -552,6 +573,7 @@ def process():
             run_id=run_id,
             stats=stats,
             uploaded_names=uploaded_names,
+            warnings=warnings,
         )
     except Exception as e:
         logger.error(f"Erreur générale: {e}")

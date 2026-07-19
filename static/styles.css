@@ -66,13 +66,14 @@ p {
 
 .upload-panel form {
   display: flex;
-  align-items: stretch;
-  gap: 12px;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
 }
 
 .dropzone {
   display: flex;
-  flex: 1;
+  width: 100%;
   min-height: 88px;
   cursor: pointer;
   flex-direction: column;
@@ -110,6 +111,28 @@ p {
   font-weight: 700;
   text-decoration: none;
   cursor: pointer;
+}
+
+.actions {
+  display: flex;
+  width: 100%;
+  justify-content: center;
+}
+
+.button.primary {
+  width: min(420px, 100%);
+  min-height: 54px;
+  font-size: 16px;
+}
+
+.button.download {
+  min-height: 46px;
+  background: var(--green);
+  white-space: nowrap;
+}
+
+.button.download:hover {
+  background: #0f4f28;
 }
 
 .button:hover {
@@ -173,8 +196,13 @@ p {
 }
 
 .files-note {
-  margin-top: 8px;
+  margin-top: 4px;
   font-size: 14px;
+}
+
+.files-label {
+  display: block;
+  margin-top: 14px;
 }
 
 .files-panel ul {
@@ -250,6 +278,12 @@ p {
 .notice.warning {
   background: var(--yellow-bg);
   border-color: #f1d27a;
+}
+
+.notice.success {
+  background: var(--green-bg);
+  border-color: #9bd4aa;
+  color: var(--green);
 }
 
 .notice.error {
@@ -378,11 +412,16 @@ tbody tr:hover td {
 
 @media (max-width: 780px) {
   .topbar,
-  .upload-panel form {
+  .files-header {
     flex-direction: column;
+    align-items: stretch;
   }
 
   .summary-grid {
     grid-template-columns: repeat(2, minmax(120px, 1fr));
+  }
+
+  .button.download {
+    width: 100%;
   }
 }

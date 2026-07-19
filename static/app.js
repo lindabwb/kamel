@@ -4,6 +4,7 @@ const search = document.getElementById("tableSearch");
 const pdfInput = document.getElementById("pdfInput");
 const selectedFiles = document.getElementById("selectedFiles");
 const analyzeButton = document.getElementById("analyzeButton");
+const uploadForm = document.getElementById("uploadForm");
 const metricButtons = document.querySelectorAll(".metric-button");
 let statusFilter = null;
 
@@ -96,3 +97,12 @@ if (pdfInput && selectedFiles && analyzeButton) {
       : "Aucun fichier sélectionné";
   });
 }
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  if (!uploadForm || !analyzeButton || analyzeButton.disabled) return;
+  const active = document.activeElement;
+  if (active && ["TEXTAREA", "BUTTON", "A"].includes(active.tagName)) return;
+  event.preventDefault();
+  uploadForm.requestSubmit();
+});
