@@ -113,6 +113,20 @@ p {
   cursor: pointer;
 }
 
+.button.small {
+  min-height: 32px;
+  font-size: 13px;
+  padding: 0 14px;
+}
+
+.button.secondary {
+  background: #647184;
+}
+
+.button.secondary:hover {
+  background: #4a5a6e;
+}
+
 .actions {
   display: flex;
   width: 100%;
@@ -137,16 +151,6 @@ p {
 
 .button:hover {
   background: var(--blue-dark);
-}
-
-.button.secondary {
-  min-height: 36px;
-  background: #40566e;
-  font-size: 14px;
-}
-
-.button.secondary:hover {
-  background: #2e4054;
 }
 
 .button:disabled {
@@ -189,24 +193,6 @@ p {
   100% {
     transform: translateX(270%);
   }
-}
-
-.sample-control {
-  display: flex;
-  width: 170px;
-  flex-direction: column;
-  justify-content: center;
-  gap: 6px;
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.sample-control input {
-  height: 38px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 0 10px;
-  font: inherit;
 }
 
 .selected-files {
@@ -260,27 +246,32 @@ p {
   font-size: 13px;
 }
 
+/* Métriques cliquables */
 .summary-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
   gap: 12px;
   margin: 16px 0;
 }
 
 .metric {
   padding: 14px;
-}
-
-.metric-button {
-  width: 100%;
+  transition: all 0.2s ease;
   cursor: pointer;
-  text-align: left;
-  font: inherit;
+  border: 2px solid transparent;
 }
 
-.metric-button:hover {
+.metric-clickable:hover {
   border-color: #8eb4d8;
   background: #f8fbff;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+}
+
+.metric-clickable.active {
+  border-color: var(--blue);
+  background: #e8f0fe;
+  box-shadow: 0 0 0 3px rgba(23, 105, 170, 0.15);
 }
 
 .metric span {
@@ -364,12 +355,17 @@ p {
 }
 
 .table-tools {
+  display: flex;
+  gap: 10px;
+  align-items: center;
   padding: 12px;
   border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
 }
 
 .table-tools input {
-  width: min(420px, 100%);
+  flex: 1;
+  min-width: 180px;
   height: 38px;
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -455,10 +451,15 @@ tbody tr:hover td {
   }
 
   .summary-grid {
-    grid-template-columns: repeat(2, minmax(120px, 1fr));
+    grid-template-columns: repeat(2, minmax(100px, 1fr));
   }
 
   .button.download {
     width: 100%;
+  }
+  
+  .table-tools {
+    flex-direction: column;
+    align-items: stretch;
   }
 }

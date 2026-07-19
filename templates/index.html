@@ -74,14 +74,40 @@
     </section>
     {% endif %}
 
+    <!-- Métriques cliquables -->
+    {% set total = inspection_rows|length %}
+    {% set conforme_count = inspection_rows|selectattr("Conformite", "equalto", "CONFORME")|list|length %}
+    {% set non_conforme_count = inspection_rows|selectattr("Conformite", "equalto", "NON CONFORME")|list|length %}
+    {% set a_verifier_count = inspection_rows|selectattr("Conformite", "equalto", "A VERIFIER")|list|length %}
+    {% set different_count = cover_rows|selectattr("Comparaison", "equalto", "DIFFERENT")|list|length %}
+    
+    <section class="summary-grid">
+      <div class="metric metric-clickable" data-filter="all">
+        <span>Total vérifications</span>
+        <strong>{{ total + cover_rows|length }}</strong>
+      </div>
+      <div class="metric metric-clickable ok" data-filter="conforme">
+        <span>Conformes</span>
+        <strong>{{ conforme_count }}</strong>
+      </div>
+      <div class="metric metric-clickable bad" data-filter="non-conforme">
+        <span>Non-conformes</span>
+        <strong>{{ non_conforme_count + different_count }}</strong>
+      </div>
+      <div class="metric metric-clickable warn" data-filter="a-verifier">
+        <span>À vérifier</span>
+        <strong>{{ a_verifier_count }}</strong>
+      </div>
+    </section>
+
     <section class="results">
       <div class="tabs">
         <button class="tab active" type="button" data-tab="cover">Page de garde</button>
-        <button class="tab" type="button" data-tab="standards">Normes</button>
         <button class="tab" type="button" data-tab="inspection">Inspection</button>
       </div>
       <div class="table-tools">
         <input id="tableSearch" type="search" placeholder="Rechercher dans les tableaux">
+        <button id="clearFilter" class="button small secondary" type="button">Effacer le filtre</button>
       </div>
 
       <section id="cover" class="tab-panel active">
@@ -98,35 +124,12 @@
             </thead>
             <tbody>
               {% for row in cover_rows %}
-              <tr>
+              <tr data-status="{{ row["Comparaison"]|lower|replace(" ", "-") }}">
                 <td>{{ row["FileName"] }}</td>
                 <td>{{ row["Champ"] }}</td>
                 <td>{{ row["Valeur nom fichier"] }}</td>
                 <td>{{ row["Valeur page de garde"] }}</td>
                 <td><span class="status status-{{ row["Comparaison"]|lower|replace(" ", "-") }}">{{ row["Comparaison"] }}</span></td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section id="standards" class="tab-panel">
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Fichier</th>
-                <th>Norme</th>
-                <th>Source</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for row in standard_rows %}
-              <tr>
-                <td>{{ row["FileName"] }}</td>
-                <td>{{ row["Norme"] }}</td>
-                <td>{{ row["Source"] }}</td>
               </tr>
               {% endfor %}
             </tbody>
@@ -150,7 +153,7 @@
             </thead>
             <tbody>
               {% for row in inspection_rows %}
-              <tr>
+              <tr data-status="{{ row["Conformite"]|lower|replace(" ", "-") }}">
                 <td>{{ row["FileName"] }}</td>
                 <td>{{ row["Page"] }}</td>
                 <td>{{ row["TestName"] }}</td>
