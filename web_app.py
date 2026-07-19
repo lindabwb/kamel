@@ -183,10 +183,6 @@ def get_inspection_items_with_coordinates(pdf_path: Path) -> dict:
                         items[23]["y1"] = max(items[23]["y1"], max(w["bottom"] for w in line_words))
                         items[23]["text"] += " " + line_text_clean
                         items[23]["words"].extend(line_words)
-                
-                # Items 18, 20, 21, 22
-                if item_num in [18, 20, 21, 22]:
-                    pass
     
     return items
 
@@ -274,57 +270,60 @@ def highlight_dimension_table(document) -> int:
         if "DRW. DIMENSION" not in text and "UNIT : MM" not in text:
             continue
         
-        # Utiliser pdfplumber pour extraire le tableau
-        with pdfplumber.open(document.name) as pdf:
-            if page_num >= len(pdf.pages):
-                continue
-            pdf_page = pdf.pages[page_num]
-            
-            # Extraire les mots avec coordonnées
-            words = pdf_page.extract_words(use_text_flow=False, keep_blank_chars=False)
-            
-            # Grouper par ligne
-            lines = {}
-            for word in words:
-                mid_y = (word["top"] + word["bottom"]) / 2
-                key = round(mid_y / 2) * 2
-                if key not in lines:
-                    lines[key] = []
-                lines[key].append(word)
-            
-            # Chercher la ligne avec la plus grande valeur
-            best_line = None
-            best_value = -1.0
-            
-            for y_key in sorted(lines.keys()):
-                line_words = sorted(lines[y_key], key=lambda w: w["x0"])
-                line_text = " ".join(w["text"] for w in line_words)
+        try:
+            # Utiliser pdfplumber pour extraire le tableau
+            with pdfplumber.open(document.name) as pdf:
+                if page_num >= len(pdf.pages):
+                    continue
+                pdf_page = pdf.pages[page_num]
                 
-                # Chercher une ligne qui contient "±" ou "+/-" et un nombre
-                if "±" in line_text or "+/-" in line_text:
-                    # Extraire la première valeur numérique avec ±
-                    match = re.search(r"(\d+[.,]\d+)\s*[±]", line_text)
-                    if match:
-                        try:
-                            value = float(match.group(1).replace(",", "."))
-                            if value > best_value:
-                                # Vérifier que c'est une ligne de dimension (contient ITEM ou un numéro)
-                                if re.match(r"^\d+", line_text.strip()):
-                                    best_line = line_words
-                                    best_value = value
-                        except ValueError:
-                            continue
-            
-            if best_line:
-                # Surligner tous les mots de la ligne
-                for word in best_line:
-                    x0 = word["x0"]
-                    y0 = word["top"]
-                    x1 = word["x1"]
-                    y1 = word["bottom"]
-                    rect = fitz.Rect(x0, y0 - 1, x1, y1 + 1)
-                    add_highlight_rect(page, rect)
-                return 1
+                # Extraire les mots avec coordonnées
+                words = pdf_page.extract_words(use_text_flow=False, keep_blank_chars=False)
+                
+                # Grouper par ligne
+                lines = {}
+                for word in words:
+                    mid_y = (word["top"] + word["bottom"]) / 2
+                    key = round(mid_y / 2) * 2
+                    if key not in lines:
+                        lines[key] = []
+                    lines[key].append(word)
+                
+                # Chercher la ligne avec la plus grande valeur
+                best_line = None
+                best_value = -1.0
+                
+                for y_key in sorted(lines.keys()):
+                    line_words = sorted(lines[y_key], key=lambda w: w["x0"])
+                    line_text = " ".join(w["text"] for w in line_words)
+                    
+                    # Chercher une ligne qui contient "±" ou "+/-" et un nombre
+                    if "±" in line_text or "+/-" in line_text:
+                        # Extraire la première valeur numérique avec ±
+                        match = re.search(r"(\d+[.,]\d+)\s*[±]", line_text)
+                        if match:
+                            try:
+                                value = float(match.group(1).replace(",", "."))
+                                if value > best_value:
+                                    # Vérifier que c'est une ligne de dimension (contient ITEM ou un numéro)
+                                    if re.match(r"^\d+", line_text.strip()):
+                                        best_line = line_words
+                                        best_value = value
+                            except ValueError:
+                                continue
+                
+                if best_line:
+                    # Surligner tous les mots de la ligne
+                    for word in best_line:
+                        x0 = word["x0"]
+                        y0 = word["top"]
+                        x1 = word["x1"]
+                        y1 = word["bottom"]
+                        rect = fitz.Rect(x0, y0 - 1, x1, y1 + 1)
+                        add_highlight_rect(page, rect)
+                    return 1
+        except Exception:
+            continue
     
     return 0
 
