@@ -189,19 +189,36 @@ def highlight_table_by_item_numbers(document, page_num, target_items, page) -> i
 
 def is_inspection_page(text: str, inspection_started: bool) -> bool:
     upper = text.upper()
+    compact = re.sub(r"[^A-Z0-9]+", "", upper)
+    if "CONTENTS" in upper or "WIRING, PRINTED - COMPONENT" in upper or "CERTIFICATE" in upper:
+        return False
     if "HOLE SIZE" in upper or "ARTICLE XSECTION" in upper or "STACKUP" in upper:
         return False
-    if "INSPECTION REPORT" in upper:
+    first_table_terms = [
+        "LAMINATEMATERIAL",
+        "CONDUCTORWIDTH",
+        "CONDUCTORSPACE",
+        "ANNULARRING",
+        "SOLDERABILITYTEST",
+        "ELECTRICTEST",
+        "ADHESION",
+    ]
+    continuation_terms = [
+        "WARPTWIST",
+        "IMPEDANCE",
+        "INOIC",
+        "IONIC",
+        "SOLDERMASKTHICKNESS",
+        "GOLDTHICKNESS",
+        "NICKELTHICKNESS",
+    ]
+    if "INSPECTION" in upper and ("REPORT" in upper or "ITEM" in upper or "DESCRIPTION" in upper):
+        return True
+    if any(term in compact for term in first_table_terms):
         return True
     return inspection_started and (
         "ITEM DESCRIPTION" in upper
-        or "WARP" in upper
-        or "IMPEDANCE" in upper
-        or "INOIC" in upper
-        or "IONIC" in upper
-        or "SOLDER MASK THICKNESS" in upper
-        or "GOLD THICKNESS" in upper
-        or "NICKEL THICKNESS" in upper
+        or any(term in compact for term in continuation_terms)
     )
 
 
@@ -253,6 +270,14 @@ def highlight_split_sublines(page, lines) -> int:
     return highlighted
 
 
+def highlight_impedance_lines(page, lines) -> int:
+    highlighted = 0
+    for _y_key, line_words, _line_text, compact in lines:
+        if "IMPEDANCE" in compact:
+            highlighted += highlight_line_words(page, line_words)
+    return highlighted
+
+
 def highlight_inspection_report(document) -> int:
     """Surligne les items du tableau INSPECTION REPORT."""
     logger.info("Surlignage INSPECTION REPORT")
@@ -276,6 +301,7 @@ def highlight_inspection_report(document) -> int:
         highlighted += highlight_lines_in_item_block(page, lines, 8, ["PTH", "VIASFILLING"])
         highlighted += highlight_lines_in_item_block(page, lines, 14, ["FINISH", "SOLDERRESIST"])
         highlighted += highlight_split_sublines(page, lines)
+        highlighted += highlight_impedance_lines(page, lines)
 
         if any("CONTAMINATION" in compact for *_unused, compact in lines):
             highlighted += highlight_ionic_contamination_block(page, lines)
