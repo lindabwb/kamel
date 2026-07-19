@@ -95,6 +95,19 @@ def add_highlight_rect(page, rect, color=(1, 0.86, 0.18)) -> None:
         logger.error(f"Erreur lors du surlignage: {e}")
 
 
+def get_text_lines(page, tolerance: float = 3.0) -> dict[float, list[tuple[float, float, float, float, str]]]:
+    """Récupère les lignes de texte d'une page."""
+    words = page.get_text("words")
+    lines = {}
+    for word in words:
+        mid_y = (word[1] + word[3]) / 2
+        key = round(mid_y / tolerance) * tolerance
+        if key not in lines:
+            lines[key] = []
+        lines[key].append((word[0], word[1], word[2], word[3], word[4]))
+    return lines
+
+
 def highlight_cover_page(document, cover_terms: list[str]) -> int:
     """Surligne les termes de la page de garde."""
     logger.info(f"Surlignage page de garde avec {len(cover_terms)} termes")
@@ -105,162 +118,114 @@ def highlight_cover_page(document, cover_terms: list[str]) -> int:
         for page in document:
             rects = page.search_for(term)
             if rects:
-                logger.debug(f"Terme '{term}' trouvé sur la page {page.number + 1}")
                 for rect in rects:
                     add_highlight_rect(page, rect)
                     highlighted += 1
                 break
-    logger.info(f"Page de garde: {highlighted} surlignages")
     return highlighted
 
 
 def highlight_ul94(document) -> int:
     """Surligne UL 94 Flame Class 94V-0."""
-    logger.info("Surlignage UL 94")
     terms = ["UL 94 Flame Class 94V0", "UL 94 Flame Class 94V-0", "94V0", "94V-0"]
     for page in document:
         for term in terms:
             rects = page.search_for(term)
             if rects:
-                logger.info(f"UL 94 trouvé sur la page {page.number + 1} avec '{term}'")
                 for rect in rects:
                     add_highlight_rect(page, rect)
                 return 1
-    logger.warning("UL 94 non trouvé")
     return 0
 
 
+def highlight_table_by_item_numbers(document, page_num, target_items, page) -> int:
+    """Surligne les lignes correspondant aux numéros d'items dans un tableau."""
+    highlighted = 0
+    lines = get_text_lines(page)
+    
+    for y_key in sorted(lines.keys()):
+        line_words = sorted(lines[y_key], key=lambda w: w[0])
+        line_text = " ".join(w[4] for w in line_words)
+        
+        # Vérifier si la ligne commence par un numéro
+        match = re.match(r"^(\d+)", line_text.strip())
+        if match:
+            item_num = int(match.group(1))
+            if item_num in target_items:
+                logger.info(f"Item {item_num} trouvé page {page_num + 1}")
+                for word in line_words:
+                    if word[4].strip():
+                        add_highlight_rect(page, fitz.Rect(word[0], word[1], word[2], word[3]))
+                        highlighted += 1
+    return highlighted
+
+
 def highlight_inspection_report(document) -> int:
-    """Surligne les items du tableau INSPECTION REPORT sur toutes les pages."""
-    logger.info("Surlignage du tableau INSPECTION REPORT")
+    """Surligne les items du tableau INSPECTION REPORT."""
+    logger.info("Surlignage INSPECTION REPORT")
     highlighted = 0
     
-    # Items cibles (première et deuxième partie)
     target_items = [1, 4, 5, 6, 8, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
     
-    # Parcourir toutes les pages
     for page_num, page in enumerate(document):
         text = page.get_text("text")
         if "INSPECTION REPORT" not in text:
             continue
         
-        logger.info(f"Page {page_num + 1}: contient INSPECTION REPORT")
-        words = page.get_text("words")
+        logger.info(f"Page {page_num + 1}: INSPECTION REPORT trouvé")
         
-        # Grouper les mots par ligne
-        lines = {}
-        for word in words:
-            mid_y = (word[1] + word[3]) / 2
-            key = round(mid_y / 2) * 2
-            if key not in lines:
-                lines[key] = []
-            lines[key].append(word)
+        # Surligner les items par leur numéro
+        highlighted += highlight_table_by_item_numbers(document, page_num, target_items, page)
         
-        logger.info(f"Page {page_num + 1}: {len(lines)} lignes détectées")
-        
-        # Pour chaque ligne, vérifier si elle commence par un numéro d'item cible
+        # Cas spéciaux: sous-lignes (PTH, BVH, IVH, Vias, Finish, Solder resist, 10321310, AFTER FINISH)
+        lines = get_text_lines(page)
         for y_key in sorted(lines.keys()):
             line_words = sorted(lines[y_key], key=lambda w: w[0])
             line_text = " ".join(w[4] for w in line_words)
             
-            # Vérifier si la ligne commence par un numéro
-            match = re.match(r"^(\d+)", line_text.strip())
-            if match:
-                item_num = int(match.group(1))
-                if item_num in target_items:
-                    logger.info(f"Item {item_num} trouvé sur la page {page_num + 1}: '{line_text[:50]}...'")
-                    # Surligner tous les mots de la ligne
-                    for word in line_words:
-                        if word[4].strip():
-                            add_highlight_rect(page, fitz.Rect(word[0], word[1], word[2], word[3]))
-                            highlighted += 1
-                    continue
-            
-            # Cas spécial: sous-lignes de l'item 8 (PTH, BVH, IVH, Vias filling)
-            if re.search(r"(PTH|BVH|IVH|Vias)", line_text, re.IGNORECASE):
-                # Vérifier si c'est une sous-ligne de l'item 8
-                # Chercher la ligne précédente qui contient "8"
-                for prev_key in sorted(lines.keys()):
-                    if prev_key >= y_key:
-                        break
-                    prev_line_words = sorted(lines[prev_key], key=lambda w: w[0])
-                    prev_line_text = " ".join(w[4] for w in prev_line_words)
-                    if re.match(r"^8\s+", prev_line_text):
-                        logger.info(f"Sous-ligne de l'item 8 trouvée: '{line_text[:50]}...'")
-                        for word in line_words:
-                            if word[4].strip():
-                                add_highlight_rect(page, fitz.Rect(word[0], word[1], word[2], word[3]))
-                                highlighted += 1
-                        break
-            
-            # Cas spécial: sous-lignes de l'item 23 (10321310, AFTER FINISH, IONIC)
-            if re.search(r"(10321310|AFTER.*FINISH|IONIC|INOIC)", line_text, re.IGNORECASE):
-                for prev_key in sorted(lines.keys()):
-                    if prev_key >= y_key:
-                        break
-                    prev_line_words = sorted(lines[prev_key], key=lambda w: w[0])
-                    prev_line_text = " ".join(w[4] for w in prev_line_words)
-                    if re.match(r"^23\s+", prev_line_text):
-                        logger.info(f"Sous-ligne de l'item 23 trouvée: '{line_text[:50]}...'")
-                        for word in line_words:
-                            if word[4].strip():
-                                add_highlight_rect(page, fitz.Rect(word[0], word[1], word[2], word[3]))
-                                highlighted += 1
-                        break
-            
-            # Cas spécial: item 14 sous-lignes (Finish, Solder resist)
-            if re.search(r"(Finish|Solder.*resist)", line_text, re.IGNORECASE):
-                for prev_key in sorted(lines.keys()):
-                    if prev_key >= y_key:
-                        break
-                    prev_line_words = sorted(lines[prev_key], key=lambda w: w[0])
-                    prev_line_text = " ".join(w[4] for w in prev_line_words)
-                    if re.match(r"^14\s+", prev_line_text):
-                        logger.info(f"Sous-ligne de l'item 14 trouvée: '{line_text[:50]}...'")
-                        for word in line_words:
-                            if word[4].strip():
-                                add_highlight_rect(page, fitz.Rect(word[0], word[1], word[2], word[3]))
-                                highlighted += 1
-                        break
+            # Chercher les sous-lignes
+            if re.search(r"(PTH|BVH|IVH|Vias|Finish|Solder.*resist|10321310|AFTER.*FINISH|IONIC|INOIC)", line_text, re.IGNORECASE):
+                # Vérifier si c'est une sous-ligne d'un item
+                for prev_key in sorted([k for k in lines.keys() if k < y_key], reverse=True):
+                    prev_words = sorted(lines[prev_key], key=lambda w: w[0])
+                    prev_text = " ".join(w[4] for w in prev_words)
+                    match = re.match(r"^(\d+)", prev_text.strip())
+                    if match:
+                        item_num = int(match.group(1))
+                        if item_num in [8, 14, 23]:
+                            logger.info(f"Sous-ligne de l'item {item_num} trouvée")
+                            for word in line_words:
+                                if word[4].strip():
+                                    add_highlight_rect(page, fitz.Rect(word[0], word[1], word[2], word[3]))
+                                    highlighted += 1
+                            break
     
-    logger.info(f"INSPECTION REPORT: {highlighted} surlignages")
     return highlighted
 
 
 def highlight_hole_size(document) -> int:
     """Surligne une ligne aléatoire du tableau HOLE SIZE."""
     import random
-    logger.info("Surlignage du tableau HOLE SIZE")
+    logger.info("Surlignage HOLE SIZE")
     
     for page_num, page in enumerate(document):
         text = page.get_text("text")
-        if "HOLE SIZE" not in text:
+        if "HOLE SIZE" not in text and "UNIT:INCH" not in text:
             continue
 
-        logger.info(f"Tableau HOLE SIZE trouvé sur la page {page_num + 1}")
-        words = page.get_text("words")
+        logger.info(f"Page {page_num + 1}: HOLE SIZE trouvé")
+        lines = get_text_lines(page)
         candidate_lines = []
-        used_y = set()
         
-        for i, word in enumerate(words):
-            word_text = word[4].strip()
-            if re.match(r"^[A-Z]$", word_text) and i + 1 < len(words):
-                next_text = words[i + 1][4].strip()
-                if re.search(r"\d", next_text):
-                    mid_y = (word[1] + word[3]) / 2
-                    y_key = round(mid_y / 2) * 2
-                    if y_key not in used_y:
-                        line_words = []
-                        for w in words:
-                            w_mid = (w[1] + w[3]) / 2
-                            if abs(w_mid - mid_y) <= 5:
-                                line_words.append(w)
-                        if line_words:
-                            candidate_lines.append(line_words)
-                            used_y.add(y_key)
+        for y_key in sorted(lines.keys()):
+            line_words = sorted(lines[y_key], key=lambda w: w[0])
+            line_text = " ".join(w[4] for w in line_words)
+            
+            # Chercher une ligne avec une lettre majuscule suivie de chiffres
+            if re.search(r"^[A-Z]\s+[\d.]+", line_text.strip()):
+                candidate_lines.append(line_words)
 
         if candidate_lines:
-            logger.info(f"{len(candidate_lines)} lignes candidates trouvées")
             selected = random.choice(candidate_lines)
             for word in selected:
                 if word[4].strip():
@@ -268,84 +233,70 @@ def highlight_hole_size(document) -> int:
             logger.info("HOLE SIZE: 1 ligne surlignée")
             return 1
 
-    logger.warning("HOLE SIZE: aucune ligne trouvée")
     return 0
 
 
 def highlight_dimension_table(document) -> int:
-    """Surligne la ligne avec la plus grande valeur DRW. DIMENSION."""
-    logger.info("Surlignage du tableau ITEM / DRW. DIMENSION")
+    """Surligne la ligne avec la plus grande valeur dans le tableau des dimensions."""
+    logger.info("Surlignage TABLEAU DES DIMENSIONS")
     
     for page_num, page in enumerate(document):
         text = page.get_text("text")
-        if "DRW. DIMENSION" not in text and "UNIT : MM" not in text:
+        # Détecter les différentes variantes du tableau des dimensions
+        if not ("DRW. DIMENSION" in text or "NO." in text or "STD.TOL." in text or "UNIT:MM" in text):
             continue
         
-        logger.info(f"Tableau ITEM / DRW. DIMENSION trouvé sur la page {page_num + 1}")
+        logger.info(f"Page {page_num + 1}: Tableau des dimensions trouvé")
         
-        words = page.get_text("words")
-        logger.info(f"{len(words)} mots extraits")
-        
-        # Grouper par ligne
-        lines = {}
-        for word in words:
-            mid_y = (word[1] + word[3]) / 2
-            key = round(mid_y / 2) * 2
-            if key not in lines:
-                lines[key] = []
-            lines[key].append(word)
-        
-        logger.info(f"{len(lines)} lignes détectées")
-        
-        # Chercher la ligne avec la plus grande valeur
+        lines = get_text_lines(page)
         best_line = None
         best_value = -1.0
-        best_item = None
         
         for y_key in sorted(lines.keys()):
             line_words = sorted(lines[y_key], key=lambda w: w[0])
             line_text = " ".join(w[4] for w in line_words)
             
-            # Chercher une ligne qui commence par un numéro et contient "±"
-            match = re.match(r"^(\d+)\s+([\d.]+)\s*[±]", line_text)
+            # Chercher une ligne avec un numéro suivi de "±"
+            match = re.search(r"^(\d+)\s+([\d.]+)\s*[±]", line_text)
             if match:
                 try:
-                    item_num = int(match.group(1))
                     value = float(match.group(2).replace(",", "."))
-                    logger.debug(f"Ligne {item_num}: valeur={value}")
                     if value > best_value:
                         best_line = line_words
                         best_value = value
-                        best_item = item_num
                 except ValueError:
                     continue
-        
+
         if best_line:
-            logger.info(f"Meilleure ligne: ITEM {best_item} avec valeur {best_value}")
+            logger.info(f"Meilleure ligne trouvée avec valeur {best_value}")
             for word in best_line:
                 if word[4].strip():
                     add_highlight_rect(page, fitz.Rect(word[0], word[1], word[2], word[3]))
-            logger.info("ITEM / DRW. DIMENSION: 1 ligne surlignée")
             return 1
     
-    logger.warning("TABLEAU ITEM / DRW. DIMENSION: aucune ligne trouvée")
     return 0
 
 
 def highlight_xsection(document) -> int:
     """Surligne HOLE WALL COPPER THICKNESS."""
-    logger.info("Surlignage XSECTION REPORT")
+    logger.info("Surlignage XSECTION")
     for page in document:
         text = page.get_text("text")
         if "HOLE WALL COPPER THICKNESS" in text:
-            logger.info(f"XSECTION trouvé sur la page {page.number + 1}")
             rects = page.search_for("HOLE WALL COPPER THICKNESS")
             if rects:
                 for rect in rects:
                     add_highlight_rect(page, rect)
-                logger.info("XSECTION: surligné")
+                # Surligner la valeur
+                lines = get_text_lines(page)
+                for y_key in lines:
+                    line_words = sorted(lines[y_key], key=lambda w: w[0])
+                    line_text = " ".join(w[4] for w in line_words)
+                    if re.search(r"\d+[.,]\d+\s*mil", line_text):
+                        for word in line_words:
+                            if re.search(r"\d+[.,]\d+", word[4]):
+                                add_highlight_rect(page, fitz.Rect(word[0], word[1], word[2], word[3]))
                 return 1
-    logger.warning("XSECTION: non trouvé")
     return 0
 
 
@@ -354,31 +305,30 @@ def highlight_stackup(document) -> int:
     logger.info("Surlignage STACKUP")
     highlighted = 0
 
-    for page in document:
+    for page_num, page in enumerate(document):
         text = page.get_text("text")
-        if "STACKUP" not in text.upper():
+        if "STACKUP" not in text.upper() and "STACK-UP" not in text.upper():
             continue
 
-        logger.info(f"STACKUP trouvé sur la page {page.number + 1}")
-        words = page.get_text("words")
-        stackup_start_y = None
-
-        for word in words:
-            if word[4].strip().upper() == "STACKUP":
-                stackup_start_y = word[1]
-                break
-
-        if stackup_start_y is None:
-            continue
-
-        for word in words:
-            if word[1] < stackup_start_y:
+        logger.info(f"Page {page_num + 1}: STACKUP trouvé")
+        lines = get_text_lines(page)
+        start_highlight = False
+        
+        for y_key in sorted(lines.keys()):
+            line_words = sorted(lines[y_key], key=lambda w: w[0])
+            line_text = " ".join(w[4] for w in line_words)
+            
+            # Détecter le début du tableau
+            if "STACKUP" in line_text.upper() or "STACK-UP" in line_text.upper():
+                start_highlight = True
                 continue
-            if word[3] > page.rect.height - 50:
-                continue
-            if word[4].strip():
-                add_highlight_rect(page, fitz.Rect(word[0], word[1], word[2], word[3]))
-                highlighted += 1
+            
+            if start_highlight:
+                # Surligner toutes les lignes du tableau
+                for word in line_words:
+                    if word[4].strip():
+                        add_highlight_rect(page, fitz.Rect(word[0], word[1], word[2], word[3]))
+                        highlighted += 1
 
     logger.info(f"STACKUP: {highlighted} surlignages")
     return highlighted
@@ -399,13 +349,13 @@ def process_pdf(source_pdf: Path, output_pdf: Path, cover_terms: list[str]) -> i
         # 2. UL 94
         highlighted += highlight_ul94(document)
 
-        # 3. Tableau INSPECTION REPORT (toutes les pages)
+        # 3. Tableau INSPECTION REPORT
         highlighted += highlight_inspection_report(document)
 
         # 4. Tableau HOLE SIZE
         highlighted += highlight_hole_size(document)
 
-        # 5. Tableau des dimensions
+        # 5. Tableau des dimensions (DRW. DIMENSION / NO. / STD.TOL.)
         highlighted += highlight_dimension_table(document)
 
         # 6. XSECTION REPORT
@@ -463,11 +413,9 @@ def process():
                 filename += ".pdf"
             pdf_path = upload_dir / filename
             uploaded_file.save(pdf_path)
-            logger.info(f"Fichier sauvegardé: {pdf_path}")
 
             try:
                 cover_terms = cover_terms_from_filename(original_name)
-                logger.info(f"Termes de la page de garde: {cover_terms}")
                 highlighted_pdf_path = run_dir / "highlighted" / verified_pdf_name(original_name)
                 highlighted_count = process_pdf(pdf_path, highlighted_pdf_path, cover_terms)
                 highlighted_paths.append(highlighted_pdf_path)
