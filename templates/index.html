@@ -34,6 +34,10 @@
           <button id="analyzeButton" class="button primary" type="submit" disabled>Analyser et préparer le PDF</button>
         </div>
       </form>
+      <div id="progressPanel" class="progress-panel" hidden>
+        <div class="progress-text">Analyse du PDF en cours...</div>
+        <div class="progress-bar" aria-hidden="true"><span></span></div>
+      </div>
     </section>
 
     {% if processed %}
@@ -69,6 +73,98 @@
       Aucun écart détecté sur les contrôles ciblés et les tableaux SPEC/RESULTS.
     </section>
     {% endif %}
+
+    <section class="results">
+      <div class="tabs">
+        <button class="tab active" type="button" data-tab="cover">Page de garde</button>
+        <button class="tab" type="button" data-tab="standards">Normes</button>
+        <button class="tab" type="button" data-tab="inspection">Inspection</button>
+      </div>
+      <div class="table-tools">
+        <input id="tableSearch" type="search" placeholder="Rechercher dans les tableaux">
+      </div>
+
+      <section id="cover" class="tab-panel active">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Fichier</th>
+                <th>Champ</th>
+                <th>Valeur nom fichier</th>
+                <th>Valeur page de garde</th>
+                <th>Comparaison</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in cover_rows %}
+              <tr>
+                <td>{{ row["FileName"] }}</td>
+                <td>{{ row["Champ"] }}</td>
+                <td>{{ row["Valeur nom fichier"] }}</td>
+                <td>{{ row["Valeur page de garde"] }}</td>
+                <td><span class="status status-{{ row["Comparaison"]|lower|replace(" ", "-") }}">{{ row["Comparaison"] }}</span></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="standards" class="tab-panel">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Fichier</th>
+                <th>Norme</th>
+                <th>Source</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in standard_rows %}
+              <tr>
+                <td>{{ row["FileName"] }}</td>
+                <td>{{ row["Norme"] }}</td>
+                <td>{{ row["Source"] }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="inspection" class="tab-panel">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Fichier</th>
+                <th>Page</th>
+                <th>Test</th>
+                <th>SPEC</th>
+                <th>RESULTS</th>
+                <th>Conformité</th>
+                <th>Commentaire</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in inspection_rows %}
+              <tr>
+                <td>{{ row["FileName"] }}</td>
+                <td>{{ row["Page"] }}</td>
+                <td>{{ row["TestName"] }}</td>
+                <td>{{ row["SPEC"] }}</td>
+                <td>{{ row["RESULTS"] }}</td>
+                <td><span class="status status-{{ row["Conformite"]|lower|replace(" ", "-") }}">{{ row["Conformite"] }}</span></td>
+                <td>{{ row["Commentaire"] }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
     {% endif %}
   </main>
 

@@ -5,6 +5,7 @@ const pdfInput = document.getElementById("pdfInput");
 const selectedFiles = document.getElementById("selectedFiles");
 const analyzeButton = document.getElementById("analyzeButton");
 const uploadForm = document.getElementById("uploadForm");
+const progressPanel = document.getElementById("progressPanel");
 const metricButtons = document.querySelectorAll(".metric-button");
 let statusFilter = null;
 
@@ -95,6 +96,14 @@ if (pdfInput && selectedFiles && analyzeButton) {
     selectedFiles.textContent = pdfs.length
       ? pdfs.map((file) => file.name).join(" | ")
       : "Aucun fichier sélectionné";
+  });
+}
+
+if (uploadForm && analyzeButton) {
+  uploadForm.addEventListener("submit", () => {
+    analyzeButton.disabled = true;
+    analyzeButton.textContent = "Analyse en cours...";
+    if (progressPanel) progressPanel.hidden = false;
   });
 }
 

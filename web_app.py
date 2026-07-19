@@ -21,6 +21,7 @@ from pcb import (
     build_cover_comparison_rows,
     extract_cover_data,
     extract_cover_fields_by_position,
+    extract_pdf_report,
     parse_filename_values_from_name,
     value_or_na,
 )
@@ -169,6 +170,16 @@ def find_table_nonconformities(pdf_path: Path, original_name: str) -> list[str]:
         logger.warning(f"Verification tableaux impossible pour {pdf_path.name}: {exc}")
         findings.append(f"Tableaux SPEC/RESULTS: vérification automatique impossible pour {original_name}: {exc}")
     return findings
+
+
+def has_pdf_text(pdf_path: Path, expected_text: str) -> bool:
+    try:
+        with fitz.open(pdf_path) as document:
+            expected = expected_text.upper()
+            return any(expected in page.get_text("text").upper() for page in document)
+    except Exception as exc:
+        logger.warning(f"Recherche texte impossible pour {pdf_path.name}: {exc}")
+        return False
 
 
 def add_highlight_rect(page, rect, color=(1, 0.86, 0.18)) -> None:
@@ -598,6 +609,9 @@ def process():
         highlighted_paths: list[Path] = []
         processed_count = 0
         warnings: list[str] = []
+        cover_rows: list[dict[str, str]] = []
+        standard_rows: list[dict[str, str]] = []
+        inspection_rows: list[dict[str, str]] = []
 
         for uploaded_file in pdf_files:
             original_name = uploaded_file.filename or "document.pdf"
@@ -612,9 +626,36 @@ def process():
                 highlighted_pdf_path = run_dir / "highlighted" / verified_pdf_name(original_name)
                 highlighted_count = process_pdf(pdf_path, highlighted_pdf_path, cover_terms)
                 highlighted_paths.append(highlighted_pdf_path)
+                report = extract_pdf_report(pdf_path, display_name=original_name)
+                cover_rows.extend(report.cover_rows)
+                standard_rows.extend(report.standard_rows)
+                inspection_rows.extend(report.inspection_rows)
                 try:
-                    warnings.extend(find_targeted_checks(pdf_path, original_name))
-                    warnings.extend(find_table_nonconformities(pdf_path, original_name))
+                    for row in report.cover_rows:
+                        if row.get("Champ") == "QUANTITY":
+                            continue
+                        if row.get("Comparaison") != "OK":
+                            warnings.append(
+                                f"Page de garde: {row.get('Champ', 'Champ')} - fichier='{row.get('Valeur nom fichier', 'NA')}', "
+                                f"PDF='{row.get('Valeur page de garde', 'NA')}' ({row.get('Comparaison', 'A VERIFIER')})"
+                            )
+                    has_ul94 = any(
+                        re.search(r"UL\s*94|94V-?0", row.get("Norme", ""), flags=re.IGNORECASE)
+                        for row in report.standard_rows
+                    )
+                    if not has_ul94:
+                        warnings.append("Norme: UL 94 Flame Class 94V-0 introuvable")
+                    if not has_pdf_text(pdf_path, "HOLE WALL COPPER THICKNESS"):
+                        warnings.append("XSECTION: HOLE WALL COPPER THICKNESS introuvable")
+                    for row in report.inspection_rows:
+                        if row.get("Conformite") == "NON CONFORME":
+                            detail = (
+                                f"Page {row.get('Page', 'NA')}: {row.get('TestName', 'NA')} - "
+                                f"SPEC='{row.get('SPEC', 'NA')}', RESULTS='{row.get('RESULTS', 'NA')}'"
+                            )
+                            if row.get("Commentaire"):
+                                detail += f" ({row.get('Commentaire')})"
+                            warnings.append(detail)
                 except Exception as check_exc:
                     logger.warning(f"Verification non bloquante impossible pour {original_name}: {check_exc}")
                     warnings.append(f"Vérification automatique impossible pour {original_name}: {check_exc}")
@@ -646,6 +687,9 @@ def process():
             stats=stats,
             uploaded_names=uploaded_names,
             warnings=warnings,
+            cover_rows=cover_rows,
+            standard_rows=standard_rows,
+            inspection_rows=inspection_rows,
         )
     except Exception as e:
         logger.error(f"Erreur générale: {e}")
