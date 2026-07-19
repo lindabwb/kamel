@@ -539,9 +539,11 @@ def evaluate_conformity(spec: str, result: str) -> tuple[str, str]:
     """
     Évalue la conformité entre une spécification et un résultat.
     Gère maintenant:
-    - Règles MIN/MAX avec AVG
+    - Impédance avec tolérance ±10%
+    - AVG (moyenne) avec valeur minimale
     - Stack up (follow stack up 1/1oz)
     - Trous bouchés (PLUGGED, NPTH)
+    - Règles MIN/MAX standard
     """
     spec_clean = clean_text(spec)
     result_clean = clean_text(result)
@@ -549,14 +551,38 @@ def evaluate_conformity(spec: str, result: str) -> tuple[str, str]:
     spec_upper = spec_clean.upper()
     result_upper = result_clean.upper()
 
-    # --- NOUVELLE RÈGLE 1: Règle MIN avec AVG ---
-    # Pour "AVG.0.0010" / "0.00116"
-    if re.search(r"\bAVG\.?\s*[\d.]+\s*\"", spec_clean, re.IGNORECASE) or re.search(r"\bAVG\.?\s*[\d.]+\s*\"", result_clean, re.IGNORECASE):
+    # --- RÈGLE 1: IMPEDANCE ---
+    # Pour "L1 (90)Ω" / "88.34 | Ω"
+    # ou "L10: (90)Ω" / "86.1 | Ω"
+    # ou "L1: (95)Ω" / "85.31 | Ω"
+    if "IMPEDANCE" in spec_upper or ("Ω" in spec_clean and re.search(r"\(\d+\)", spec_clean)):
+        # Extraire la valeur cible entre parenthèses
+        target_match = re.search(r"\((\d+)\)", spec_clean)
+        if target_match:
+            target = float(target_match.group(1))
+            # Extraire les valeurs mesurées
+            result_numbers = extract_numbers(result_clean)
+            if result_numbers:
+                # Tolérance standard ±10% pour l'impédance
+                tolerance = 0.10  # 10%
+                low = target * (1 - tolerance)
+                high = target * (1 + tolerance)
+                
+                failing = [value for value in result_numbers if not low <= value <= high]
+                if not failing:
+                    return "CONFORME", f"Impédance dans tolérance ±10%: {target}Ω (plage {low:.1f}-{high:.1f}Ω)"
+                else:
+                    return "NON CONFORME", f"Impédance hors tolérance ±10%: attendu {target}Ω, mesuré {', '.join(f'{v:.2f}' for v in failing)}Ω"
+            return "A VERIFIER", "IMPEDANCE: impossible d'extraire les valeurs mesurées"
+        return "A VERIFIER", "IMPEDANCE: impossible d'extraire la valeur cible"
+
+    # --- RÈGLE 2: AVG avec deux-points ---
+    # Pour "AVG:0.00080"" / "0.00096 | ""
+    if re.search(r"AVG\s*[:.]\s*[\d.]+\s*\"", spec_clean, re.IGNORECASE):
         spec_numbers = extract_numbers(spec_clean)
         result_numbers = extract_numbers(result_clean)
         if spec_numbers and result_numbers:
             limit = spec_numbers[0]
-            # Vérifier que toutes les mesures >= limit
             failing = [value for value in result_numbers if value < limit]
             if not failing:
                 return "CONFORME", f"Toutes les mesures >= {limit:g} (AVG)"
@@ -564,7 +590,21 @@ def evaluate_conformity(spec: str, result: str) -> tuple[str, str]:
                 return "NON CONFORME", f"Mesure(s) < {limit:g}: {', '.join(f'{value:g}' for value in failing)}"
         return "A VERIFIER", "AVG: impossible d'extraire les nombres"
 
-    # --- NOUVELLE RÈGLE 2: Stack Up (follow stack up) ---
+    # --- RÈGLE 3: AVG avec point (ancien format) ---
+    # Pour "AVG.0.0010" / "0.00116"
+    if re.search(r"\bAVG\.?\s*[\d.]+\s*\"", spec_clean, re.IGNORECASE) or re.search(r"\bAVG\.?\s*[\d.]+\s*\"", result_clean, re.IGNORECASE):
+        spec_numbers = extract_numbers(spec_clean)
+        result_numbers = extract_numbers(result_clean)
+        if spec_numbers and result_numbers:
+            limit = spec_numbers[0]
+            failing = [value for value in result_numbers if value < limit]
+            if not failing:
+                return "CONFORME", f"Toutes les mesures >= {limit:g} (AVG)"
+            else:
+                return "NON CONFORME", f"Mesure(s) < {limit:g}: {', '.join(f'{value:g}' for value in failing)}"
+        return "A VERIFIER", "AVG: impossible d'extraire les nombres"
+
+    # --- RÈGLE 4: Stack Up (follow stack up) ---
     # Pour "follow stack up 1/1oz" / "1/1oz"
     if "follow stack up" in spec_clean.lower():
         spec_match = re.search(r"(\d+/\d+oz)", spec_clean)
@@ -581,9 +621,8 @@ def evaluate_conformity(spec: str, result: str) -> tuple[str, str]:
         
         return "A VERIFIER", "Stack up: format non reconnu"
 
-    # --- NOUVELLE RÈGLE 3: Trous bouchés (PLUGGED, NPTH) ---
+    # --- RÈGLE 5: Trous bouchés (PLUGGED, NPTH) ---
     # Pour "0.0098 ± 0.003" / "PLUGGED | PLUGGED | PLUGGED"
-    # Détecter si le résultat contient PLUGGED ou NPTH
     if "PLUGGED" in result_upper:
         return "CONFORME", "Trous bouchés (PLUGGED) conformes"
     
