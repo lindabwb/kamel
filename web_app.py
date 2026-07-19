@@ -12,18 +12,11 @@ import logging
 from pathlib import Path
 
 import fitz
-import pdfplumber
 from flask import Flask, render_template, request, send_file
 from werkzeug.utils import secure_filename
 
 from pcb import (
-    CoverData,
-    build_cover_comparison_rows,
-    extract_cover_data,
-    extract_cover_fields_by_position,
-    extract_pdf_report,
     parse_filename_values_from_name,
-    value_or_na,
 )
 
 # Configuration du logging
@@ -52,7 +45,6 @@ app = Flask(
     static_folder=str(BASE_DIR / "static"),
 )
 app.config["MAX_CONTENT_LENGTH"] = 80 * 1024 * 1024
-app.config["TIMEOUT"] = 300  # 5 minutes
 
 RUN_DOWNLOAD_NAMES: dict[str, str] = {}
 RUN_HIGHLIGHT_PATHS: dict[str, list[Path]] = {}
@@ -194,7 +186,6 @@ def highlight_table_by_item_numbers(document, page_num, target_items, page) -> i
         line_words = sorted(lines[y_key], key=lambda w: w[0])
         line_text = " ".join(w[4] for w in line_words)
         
-        # Vérifier si la ligne commence par un numéro
         match = re.match(r"^(\d+)", line_text.strip())
         if match:
             item_num = int(match.group(1))
@@ -347,7 +338,6 @@ def highlight_hole_size(document) -> int:
             line_words = sorted(lines[y_key], key=lambda w: w[0])
             line_text = " ".join(w[4] for w in line_words)
             
-            # Chercher une ligne avec une lettre majuscule suivie de chiffres
             if re.search(r"^[A-Z]\s+[\d.]+", line_text.strip()):
                 candidate_lines.append(line_words)
 
@@ -368,7 +358,6 @@ def highlight_dimension_table(document) -> int:
     
     for page_num, page in enumerate(document):
         text = page.get_text("text")
-        # Détecter les différentes variantes du tableau des dimensions
         if not ("DRW. DIMENSION" in text or "NO." in text or "STD.TOL." in text or "UNIT:MM" in text):
             continue
         
@@ -382,7 +371,6 @@ def highlight_dimension_table(document) -> int:
             line_words = sorted(lines[y_key], key=lambda w: w[0])
             line_text = " ".join(w[4] for w in line_words)
             
-            # Chercher une ligne avec un numéro suivi de "±"
             match = re.search(r"^(\d+)\s+([\d.]+)\s*[±]", line_text)
             if match:
                 try:
@@ -413,7 +401,6 @@ def highlight_xsection(document) -> int:
             if rects:
                 for rect in rects:
                     add_highlight_rect(page, rect)
-                # Surligner la valeur
                 lines = get_text_lines(page)
                 for y_key in lines:
                     line_words = sorted(lines[y_key], key=lambda w: w[0])
@@ -444,13 +431,11 @@ def highlight_stackup(document) -> int:
             line_words = sorted(lines[y_key], key=lambda w: w[0])
             line_text = " ".join(w[4] for w in line_words)
             
-            # Détecter le début du tableau
             if "STACKUP" in line_text.upper() or "STACK-UP" in line_text.upper():
                 start_highlight = True
                 continue
             
             if start_highlight:
-                # Surligner toutes les lignes du tableau
                 for word in line_words:
                     if word[4].strip():
                         add_highlight_rect(page, fitz.Rect(word[0], word[1], word[2], word[3]))
@@ -481,7 +466,7 @@ def process_pdf(source_pdf: Path, output_pdf: Path, cover_terms: list[str]) -> i
         # 4. Tableau HOLE SIZE
         highlighted += highlight_hole_size(document)
 
-        # 5. Tableau des dimensions (DRW. DIMENSION / NO. / STD.TOL.)
+        # 5. Tableau des dimensions
         highlighted += highlight_dimension_table(document)
 
         # 6. XSECTION REPORT
@@ -531,10 +516,6 @@ def process():
 
         highlighted_paths: list[Path] = []
         processed_count = 0
-        warnings: list[str] = []
-        cover_rows: list[dict[str, str]] = []
-        standard_rows: list[dict[str, str]] = []
-        inspection_rows: list[dict[str, str]] = []
 
         for uploaded_file in pdf_files:
             original_name = uploaded_file.filename or "document.pdf"
@@ -549,54 +530,8 @@ def process():
                 highlighted_pdf_path = run_dir / "highlighted" / verified_pdf_name(original_name)
                 highlighted_count = process_pdf(pdf_path, highlighted_pdf_path, cover_terms)
                 highlighted_paths.append(highlighted_pdf_path)
-                
-                # --- EXTRACTION DES TABLEAUX AVEC GESTION DES ERREURS ---
-                try:
-                    logger.info(f"Extraction des tableaux pour {original_name}...")
-                    report = extract_pdf_report(pdf_path, display_name=original_name)
-                    cover_rows.extend(report.cover_rows)
-                    standard_rows.extend(report.standard_rows)
-                    inspection_rows.extend(report.inspection_rows)
-                    logger.info(f"Extraction réussie: {len(report.inspection_rows)} lignes d'inspection")
-                except Exception as e:
-                    logger.error(f"Erreur d'extraction des tableaux pour {original_name}: {e}")
-                    import traceback
-                    logger.error(traceback.format_exc())
-                    warnings.append(f"Extraction des données techniques impossible pour {original_name}: {str(e)}")
-                    # On continue sans les tableaux
-                
-                # Générer les avertissements uniquement si l'extraction a réussi
-                if cover_rows or standard_rows or inspection_rows:
-                    for row in cover_rows:
-                        if row.get("Champ") == "QUANTITY":
-                            continue
-                        if row.get("Comparaison") != "OK":
-                            warnings.append(
-                                f"Page de garde: {row.get('Champ', 'Champ')} - fichier='{row.get('Valeur nom fichier', 'NA')}', "
-                                f"PDF='{row.get('Valeur page de garde', 'NA')}' ({row.get('Comparaison', 'A VERIFIER')})"
-                            )
-                    
-                    has_ul94 = any(
-                        re.search(r"UL\s*94|94V-?0", row.get("Norme", ""), flags=re.IGNORECASE)
-                        for row in standard_rows
-                    )
-                    if not has_ul94 and standard_rows:
-                        warnings.append("Norme: UL 94 Flame Class 94V-0 introuvable")
-                    
-                    if not has_pdf_text(pdf_path, "HOLE WALL COPPER THICKNESS"):
-                        warnings.append("XSECTION: HOLE WALL COPPER THICKNESS introuvable")
-                    
-                    for row in inspection_rows:
-                        if row.get("Conformite") == "NON CONFORME":
-                            detail = (
-                                f"Page {row.get('Page', 'NA')}: {row.get('TestName', 'NA')} - "
-                                f"SPEC='{row.get('SPEC', 'NA')}', RESULTS='{row.get('RESULTS', 'NA')}'"
-                            )
-                            if row.get("Commentaire"):
-                                detail += f" ({row.get('Commentaire')})"
-                            warnings.append(detail)
-                
                 processed_count += 1
+                
             except Exception as exc:
                 logger.error(f"Erreur: {exc}")
                 import traceback
@@ -617,17 +552,16 @@ def process():
         RUN_DOWNLOAD_NAMES[run_id] = report_download_name(uploaded_names)
         RUN_HIGHLIGHT_PATHS[run_id] = highlighted_paths
 
-        # Rendre le template avec toutes les données
         return render_template(
             "index.html",
             processed=True,
             run_id=run_id,
             stats=stats,
             uploaded_names=uploaded_names,
-            warnings=warnings,
-            cover_rows=cover_rows,
-            standard_rows=standard_rows,
-            inspection_rows=inspection_rows,
+            warnings=[],
+            cover_rows=[],
+            standard_rows=[],
+            inspection_rows=[],
         )
     except Exception as e:
         logger.error(f"Erreur générale: {e}")
