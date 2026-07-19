@@ -21,7 +21,6 @@ from pcb import (
     build_cover_comparison_rows,
     extract_cover_data,
     extract_cover_fields_by_position,
-    extract_pdf_report,
     parse_filename_values_from_name,
     value_or_na,
 )
@@ -142,22 +141,30 @@ def find_targeted_checks(pdf_path: Path, original_name: str) -> list[str]:
 
 
 def find_table_nonconformities(pdf_path: Path, original_name: str) -> list[str]:
-    """Analyse les tableaux SPEC/RESULTS et remonte uniquement les NON CONFORME."""
+    """Repere rapidement les resultats explicitement en echec dans les pages techniques."""
     findings: list[str] = []
+    failure_pattern = re.compile(r"\b(NON\s*CONFORME|FAIL(?:ED)?|REJECT(?:ED)?|NG)\b", flags=re.IGNORECASE)
     try:
-        report = extract_pdf_report(pdf_path, display_name=original_name)
-        for row in report.inspection_rows:
-            if row.get("Conformite") != "NON CONFORME":
-                continue
-            test_name = row.get("TestName", "NA")
-            spec = row.get("SPEC", "NA")
-            results = row.get("RESULTS", "NA")
-            page = row.get("Page", "NA")
-            comment = row.get("Commentaire", "")
-            detail = f"Page {page}: {test_name} - SPEC='{spec}', RESULTS='{results}'"
-            if comment:
-                detail += f" ({comment})"
-            findings.append(detail)
+        with fitz.open(pdf_path) as document:
+            for page_index, page in enumerate(document, start=1):
+                text = page.get_text("text")
+                upper = text.upper()
+                if not any(
+                    marker in upper
+                    for marker in [
+                        "INSPECTION",
+                        "HOLE SIZE",
+                        "DRW. DIMENSION",
+                        "XSECTION",
+                        "STACKUP",
+                        "IMPEDANCE",
+                    ]
+                ):
+                    continue
+                for raw_line in text.splitlines():
+                    line = " ".join(raw_line.split())
+                    if line and failure_pattern.search(line):
+                        findings.append(f"Page {page_index}: {line}")
     except Exception as exc:
         logger.warning(f"Verification tableaux impossible pour {pdf_path.name}: {exc}")
         findings.append(f"Tableaux SPEC/RESULTS: vérification automatique impossible pour {original_name}: {exc}")
@@ -605,8 +612,12 @@ def process():
                 highlighted_pdf_path = run_dir / "highlighted" / verified_pdf_name(original_name)
                 highlighted_count = process_pdf(pdf_path, highlighted_pdf_path, cover_terms)
                 highlighted_paths.append(highlighted_pdf_path)
-                warnings.extend(find_targeted_checks(pdf_path, original_name))
-                warnings.extend(find_table_nonconformities(pdf_path, original_name))
+                try:
+                    warnings.extend(find_targeted_checks(pdf_path, original_name))
+                    warnings.extend(find_table_nonconformities(pdf_path, original_name))
+                except Exception as check_exc:
+                    logger.warning(f"Verification non bloquante impossible pour {original_name}: {check_exc}")
+                    warnings.append(f"Vérification automatique impossible pour {original_name}: {check_exc}")
                 processed_count += 1
             except Exception as exc:
                 logger.error(f"Erreur: {exc}")
