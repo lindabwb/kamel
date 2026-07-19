@@ -135,52 +135,17 @@ def highlight_inspection_report(document) -> int:
     logger.info("Surlignage du tableau INSPECTION REPORT")
     highlighted = 0
     
-    # Trouver toutes les pages qui contiennent INSPECTION REPORT
-    inspection_pages = []
-    for page in document:
+    # Items cibles (première et deuxième partie)
+    target_items = [1, 4, 5, 6, 8, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]
+    
+    # Parcourir toutes les pages
+    for page_num, page in enumerate(document):
         text = page.get_text("text")
-        if "INSPECTION REPORT" in text:
-            inspection_pages.append(page)
-    
-    if not inspection_pages:
-        logger.warning("Page INSPECTION REPORT non trouvée")
-        return 0
-    
-    logger.info(f"{len(inspection_pages)} pages INSPECTION REPORT trouvées")
-    
-    # Items à surligner avec leurs motifs (pour les deux parties du tableau)
-    target_patterns = [
-        # Première partie du tableau (items 1-14)
-        (r"^1\s+LAMINATE", 1),
-        (r"^4\s+CONDUCTOR.*WIDTH", 4),
-        (r"^5\s+CONDUCTOR.*SPACE", 5),
-        (r"^6\s+ANNULAR", 6),
-        (r"^8\s+COPPER.*PTH", 8),
-        (r"VIAS.*FILLING", 8),
-        (r"^12\s+SOLDERABILITY", 12),
-        (r"^13\s+ELECTRIC", 13),
-        (r"^14\s+ADHESION.*FINISH", 14),
-        (r"^14\s+ADHESION.*SOLDER", 14),
-        # Deuxième partie du tableau (items 15-24)
-        (r"^15\s+IPC", 15),
-        (r"^16\s+IPC", 16),
-        (r"^17\s+IPC", 17),
-        (r"^18\s+WARP", 18),
-        (r"^19\s+IPC", 19),
-        (r"^20\s+SOLDER.*MASK", 20),
-        (r"^21\s+GOLD", 21),
-        (r"^22\s+NICKEL", 22),
-        (r"^23\s+.*10321310", 23),
-        (r"^23\s+.*AFTER.*FINISH", 23),
-        (r"^23\s+.*IONIC", 23),
-        (r"^24\s+.*\d+\.\d+.*Ω", 24),
-        (r"^24\s+IMPEDANCE", 24),
-    ]
-    
-    for page in inspection_pages:
-        logger.info(f"Traitement de la page {page.number + 1}")
+        if "INSPECTION REPORT" not in text:
+            continue
+        
+        logger.info(f"Page {page_num + 1}: contient INSPECTION REPORT")
         words = page.get_text("words")
-        logger.info(f"{len(words)} mots extraits")
         
         # Grouper les mots par ligne
         lines = {}
@@ -191,22 +156,72 @@ def highlight_inspection_report(document) -> int:
                 lines[key] = []
             lines[key].append(word)
         
-        logger.info(f"{len(lines)} lignes détectées")
+        logger.info(f"Page {page_num + 1}: {len(lines)} lignes détectées")
         
-        # Pour chaque ligne, vérifier si elle correspond à un motif
+        # Pour chaque ligne, vérifier si elle commence par un numéro d'item cible
         for y_key in sorted(lines.keys()):
             line_words = sorted(lines[y_key], key=lambda w: w[0])
             line_text = " ".join(w[4] for w in line_words)
             
-            for pattern, item_num in target_patterns:
-                if re.search(pattern, line_text, re.IGNORECASE):
-                    logger.debug(f"Item {item_num} trouvé: '{line_text[:60]}...'")
+            # Vérifier si la ligne commence par un numéro
+            match = re.match(r"^(\d+)", line_text.strip())
+            if match:
+                item_num = int(match.group(1))
+                if item_num in target_items:
+                    logger.info(f"Item {item_num} trouvé sur la page {page_num + 1}: '{line_text[:50]}...'")
                     # Surligner tous les mots de la ligne
                     for word in line_words:
                         if word[4].strip():
                             add_highlight_rect(page, fitz.Rect(word[0], word[1], word[2], word[3]))
                             highlighted += 1
-                    break
+                    continue
+            
+            # Cas spécial: sous-lignes de l'item 8 (PTH, BVH, IVH, Vias filling)
+            if re.search(r"(PTH|BVH|IVH|Vias)", line_text, re.IGNORECASE):
+                # Vérifier si c'est une sous-ligne de l'item 8
+                # Chercher la ligne précédente qui contient "8"
+                for prev_key in sorted(lines.keys()):
+                    if prev_key >= y_key:
+                        break
+                    prev_line_words = sorted(lines[prev_key], key=lambda w: w[0])
+                    prev_line_text = " ".join(w[4] for w in prev_line_words)
+                    if re.match(r"^8\s+", prev_line_text):
+                        logger.info(f"Sous-ligne de l'item 8 trouvée: '{line_text[:50]}...'")
+                        for word in line_words:
+                            if word[4].strip():
+                                add_highlight_rect(page, fitz.Rect(word[0], word[1], word[2], word[3]))
+                                highlighted += 1
+                        break
+            
+            # Cas spécial: sous-lignes de l'item 23 (10321310, AFTER FINISH, IONIC)
+            if re.search(r"(10321310|AFTER.*FINISH|IONIC|INOIC)", line_text, re.IGNORECASE):
+                for prev_key in sorted(lines.keys()):
+                    if prev_key >= y_key:
+                        break
+                    prev_line_words = sorted(lines[prev_key], key=lambda w: w[0])
+                    prev_line_text = " ".join(w[4] for w in prev_line_words)
+                    if re.match(r"^23\s+", prev_line_text):
+                        logger.info(f"Sous-ligne de l'item 23 trouvée: '{line_text[:50]}...'")
+                        for word in line_words:
+                            if word[4].strip():
+                                add_highlight_rect(page, fitz.Rect(word[0], word[1], word[2], word[3]))
+                                highlighted += 1
+                        break
+            
+            # Cas spécial: item 14 sous-lignes (Finish, Solder resist)
+            if re.search(r"(Finish|Solder.*resist)", line_text, re.IGNORECASE):
+                for prev_key in sorted(lines.keys()):
+                    if prev_key >= y_key:
+                        break
+                    prev_line_words = sorted(lines[prev_key], key=lambda w: w[0])
+                    prev_line_text = " ".join(w[4] for w in prev_line_words)
+                    if re.match(r"^14\s+", prev_line_text):
+                        logger.info(f"Sous-ligne de l'item 14 trouvée: '{line_text[:50]}...'")
+                        for word in line_words:
+                            if word[4].strip():
+                                add_highlight_rect(page, fitz.Rect(word[0], word[1], word[2], word[3]))
+                                highlighted += 1
+                        break
     
     logger.info(f"INSPECTION REPORT: {highlighted} surlignages")
     return highlighted
