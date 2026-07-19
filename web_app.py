@@ -94,84 +94,6 @@ def cover_terms_from_filename(filename: str) -> list[str]:
     return list(dict.fromkeys(terms))
 
 
-def find_targeted_checks(pdf_path: Path, original_name: str) -> list[str]:
-    """Verifie uniquement les points demandes, sans scanner tout le texte libre."""
-    findings: list[str] = []
-    try:
-        with pdfplumber.open(pdf_path) as pdf:
-            page_texts = [(page.extract_text(x_tolerance=1, y_tolerance=3) or "") for page in pdf.pages]
-            all_text = "\n".join(page_texts)
-            cover = extract_cover_data(all_text)
-            positioned_fields = extract_cover_fields_by_position(pdf)
-
-        cover = CoverData(
-            po_no=value_or_na(positioned_fields.get("P.O.NO", "NA"))
-            if positioned_fields.get("P.O.NO", "NA") != "NA"
-            else cover.po_no,
-            part_no=value_or_na(positioned_fields.get("PART NO", "NA"))
-            if positioned_fields.get("PART NO", "NA") != "NA"
-            else cover.part_no,
-            quantity=value_or_na(positioned_fields.get("QUANTITY", "NA"))
-            if positioned_fields.get("QUANTITY", "NA") != "NA"
-            else cover.quantity,
-            data_code=value_or_na(positioned_fields.get("DATA CODE", "NA"))
-            if positioned_fields.get("DATA CODE", "NA") != "NA"
-            else cover.data_code,
-            standards=cover.standards,
-        )
-        cover_rows, _cover_warnings = build_cover_comparison_rows(pdf_path, cover, original_name)
-        for row in cover_rows:
-            if row.get("Champ") == "QUANTITY":
-                continue
-            status = row.get("Comparaison", "A VERIFIER")
-            if status != "OK":
-                findings.append(
-                    f"Page de garde: {row.get('Champ', 'Champ')} - fichier='{row.get('Valeur nom fichier', 'NA')}', "
-                    f"PDF='{row.get('Valeur page de garde', 'NA')}' ({status})"
-                )
-
-        if not re.search(r"UL\s*94\s*Flame\s*Class\s*94V-?0|UL\s*94V-?0|94V-?0", all_text, flags=re.IGNORECASE):
-            findings.append("Norme: UL 94 Flame Class 94V-0 introuvable")
-
-        if "HOLE WALL COPPER THICKNESS" not in all_text.upper():
-            findings.append("XSECTION: HOLE WALL COPPER THICKNESS introuvable")
-    except Exception as exc:
-        logger.warning(f"Verification ciblee impossible pour {pdf_path.name}: {exc}")
-        findings.append(f"Vérification automatique impossible pour {original_name}: {exc}")
-    return findings
-
-
-def find_table_nonconformities(pdf_path: Path, original_name: str) -> list[str]:
-    """Repere rapidement les resultats explicitement en echec dans les pages techniques."""
-    findings: list[str] = []
-    failure_pattern = re.compile(r"\b(NON\s*CONFORME|FAIL(?:ED)?|REJECT(?:ED)?|NG)\b", flags=re.IGNORECASE)
-    try:
-        with fitz.open(pdf_path) as document:
-            for page_index, page in enumerate(document, start=1):
-                text = page.get_text("text")
-                upper = text.upper()
-                if not any(
-                    marker in upper
-                    for marker in [
-                        "INSPECTION",
-                        "HOLE SIZE",
-                        "DRW. DIMENSION",
-                        "XSECTION",
-                        "STACKUP",
-                        "IMPEDANCE",
-                    ]
-                ):
-                    continue
-                for raw_line in text.splitlines():
-                    line = " ".join(raw_line.split())
-                    if line and failure_pattern.search(line):
-                        findings.append(f"Page {page_index}: {line}")
-    except Exception as exc:
-        logger.warning(f"Verification tableaux impossible pour {pdf_path.name}: {exc}")
-        findings.append(f"Tableaux SPEC/RESULTS: vérification automatique impossible pour {original_name}: {exc}")
-    return findings
-
-
 def has_pdf_text(pdf_path: Path, expected_text: str) -> bool:
     try:
         with fitz.open(pdf_path) as document:
@@ -626,39 +548,43 @@ def process():
                 highlighted_pdf_path = run_dir / "highlighted" / verified_pdf_name(original_name)
                 highlighted_count = process_pdf(pdf_path, highlighted_pdf_path, cover_terms)
                 highlighted_paths.append(highlighted_pdf_path)
+                
+                # Extraire le rapport complet pour les tableaux
                 report = extract_pdf_report(pdf_path, display_name=original_name)
                 cover_rows.extend(report.cover_rows)
                 standard_rows.extend(report.standard_rows)
                 inspection_rows.extend(report.inspection_rows)
-                try:
-                    for row in report.cover_rows:
-                        if row.get("Champ") == "QUANTITY":
-                            continue
-                        if row.get("Comparaison") != "OK":
-                            warnings.append(
-                                f"Page de garde: {row.get('Champ', 'Champ')} - fichier='{row.get('Valeur nom fichier', 'NA')}', "
-                                f"PDF='{row.get('Valeur page de garde', 'NA')}' ({row.get('Comparaison', 'A VERIFIER')})"
-                            )
-                    has_ul94 = any(
-                        re.search(r"UL\s*94|94V-?0", row.get("Norme", ""), flags=re.IGNORECASE)
-                        for row in report.standard_rows
-                    )
-                    if not has_ul94:
-                        warnings.append("Norme: UL 94 Flame Class 94V-0 introuvable")
-                    if not has_pdf_text(pdf_path, "HOLE WALL COPPER THICKNESS"):
-                        warnings.append("XSECTION: HOLE WALL COPPER THICKNESS introuvable")
-                    for row in report.inspection_rows:
-                        if row.get("Conformite") == "NON CONFORME":
-                            detail = (
-                                f"Page {row.get('Page', 'NA')}: {row.get('TestName', 'NA')} - "
-                                f"SPEC='{row.get('SPEC', 'NA')}', RESULTS='{row.get('RESULTS', 'NA')}'"
-                            )
-                            if row.get("Commentaire"):
-                                detail += f" ({row.get('Commentaire')})"
-                            warnings.append(detail)
-                except Exception as check_exc:
-                    logger.warning(f"Verification non bloquante impossible pour {original_name}: {check_exc}")
-                    warnings.append(f"Vérification automatique impossible pour {original_name}: {check_exc}")
+                
+                # Générer les avertissements
+                for row in report.cover_rows:
+                    if row.get("Champ") == "QUANTITY":
+                        continue
+                    if row.get("Comparaison") != "OK":
+                        warnings.append(
+                            f"Page de garde: {row.get('Champ', 'Champ')} - fichier='{row.get('Valeur nom fichier', 'NA')}', "
+                            f"PDF='{row.get('Valeur page de garde', 'NA')}' ({row.get('Comparaison', 'A VERIFIER')})"
+                        )
+                
+                has_ul94 = any(
+                    re.search(r"UL\s*94|94V-?0", row.get("Norme", ""), flags=re.IGNORECASE)
+                    for row in report.standard_rows
+                )
+                if not has_ul94:
+                    warnings.append("Norme: UL 94 Flame Class 94V-0 introuvable")
+                
+                if not has_pdf_text(pdf_path, "HOLE WALL COPPER THICKNESS"):
+                    warnings.append("XSECTION: HOLE WALL COPPER THICKNESS introuvable")
+                
+                for row in report.inspection_rows:
+                    if row.get("Conformite") == "NON CONFORME":
+                        detail = (
+                            f"Page {row.get('Page', 'NA')}: {row.get('TestName', 'NA')} - "
+                            f"SPEC='{row.get('SPEC', 'NA')}', RESULTS='{row.get('RESULTS', 'NA')}'"
+                        )
+                        if row.get("Commentaire"):
+                            detail += f" ({row.get('Commentaire')})"
+                        warnings.append(detail)
+                
                 processed_count += 1
             except Exception as exc:
                 logger.error(f"Erreur: {exc}")
@@ -680,6 +606,7 @@ def process():
         RUN_DOWNLOAD_NAMES[run_id] = report_download_name(uploaded_names)
         RUN_HIGHLIGHT_PATHS[run_id] = highlighted_paths
 
+        # Rendre le template avec toutes les données
         return render_template(
             "index.html",
             processed=True,
