@@ -12,8 +12,7 @@ import logging
 from pathlib import Path
 
 import fitz
-import pdfplumber
-from flask import Flask, render_template, request, send_file, jsonify
+from flask import Flask, render_template, request, send_file
 from werkzeug.utils import secure_filename
 
 from pcb import parse_filename_values_from_name
@@ -44,7 +43,6 @@ app = Flask(
     static_folder=str(BASE_DIR / "static"),
 )
 app.config["MAX_CONTENT_LENGTH"] = 80 * 1024 * 1024
-app.config["TIMEOUT"] = 120  # 2 minutes timeout
 
 RUN_DOWNLOAD_NAMES: dict[str, str] = {}
 RUN_HIGHLIGHT_PATHS: dict[str, list[Path]] = {}
@@ -133,29 +131,26 @@ def highlight_ul94(document) -> int:
 
 
 def highlight_inspection_report(document) -> int:
-    """Surligne les items du tableau INSPECTION REPORT en utilisant uniquement fitz."""
-    logger.info("Surlignage du tableau INSPECTION REPORT avec fitz")
+    """Surligne les items du tableau INSPECTION REPORT sur toutes les pages."""
+    logger.info("Surlignage du tableau INSPECTION REPORT")
     highlighted = 0
     
-    inspection_page = None
+    # Trouver toutes les pages qui contiennent INSPECTION REPORT
+    inspection_pages = []
     for page in document:
         text = page.get_text("text")
         if "INSPECTION REPORT" in text:
-            inspection_page = page
-            break
+            inspection_pages.append(page)
     
-    if not inspection_page:
+    if not inspection_pages:
         logger.warning("Page INSPECTION REPORT non trouvée")
         return 0
     
-    logger.info(f"Page INSPECTION REPORT trouvée: page {inspection_page.number + 1}")
+    logger.info(f"{len(inspection_pages)} pages INSPECTION REPORT trouvées")
     
-    # Récupérer les mots de la page
-    words = inspection_page.get_text("words")
-    logger.info(f"{len(words)} mots extraits")
-    
-    # Items à surligner avec leurs motifs
+    # Items à surligner avec leurs motifs (pour les deux parties du tableau)
     target_patterns = [
+        # Première partie du tableau (items 1-14)
         (r"^1\s+LAMINATE", 1),
         (r"^4\s+CONDUCTOR.*WIDTH", 4),
         (r"^5\s+CONDUCTOR.*SPACE", 5),
@@ -166,40 +161,52 @@ def highlight_inspection_report(document) -> int:
         (r"^13\s+ELECTRIC", 13),
         (r"^14\s+ADHESION.*FINISH", 14),
         (r"^14\s+ADHESION.*SOLDER", 14),
+        # Deuxième partie du tableau (items 15-24)
+        (r"^15\s+IPC", 15),
+        (r"^16\s+IPC", 16),
+        (r"^17\s+IPC", 17),
         (r"^18\s+WARP", 18),
+        (r"^19\s+IPC", 19),
         (r"^20\s+SOLDER.*MASK", 20),
         (r"^21\s+GOLD", 21),
         (r"^22\s+NICKEL", 22),
         (r"^23\s+.*10321310", 23),
         (r"^23\s+.*AFTER.*FINISH", 23),
+        (r"^23\s+.*IONIC", 23),
+        (r"^24\s+.*\d+\.\d+.*Ω", 24),
         (r"^24\s+IMPEDANCE", 24),
     ]
     
-    # Grouper les mots par ligne
-    lines = {}
-    for word in words:
-        mid_y = (word[1] + word[3]) / 2
-        key = round(mid_y / 2) * 2
-        if key not in lines:
-            lines[key] = []
-        lines[key].append(word)
-    
-    logger.info(f"{len(lines)} lignes détectées")
-    
-    # Pour chaque ligne, vérifier si elle correspond à un motif
-    for y_key in sorted(lines.keys()):
-        line_words = sorted(lines[y_key], key=lambda w: w[0])
-        line_text = " ".join(w[4] for w in line_words)
+    for page in inspection_pages:
+        logger.info(f"Traitement de la page {page.number + 1}")
+        words = page.get_text("words")
+        logger.info(f"{len(words)} mots extraits")
         
-        for pattern, item_num in target_patterns:
-            if re.search(pattern, line_text, re.IGNORECASE):
-                logger.debug(f"Item {item_num} trouvé: '{line_text[:60]}...'")
-                # Surligner tous les mots de la ligne
-                for word in line_words:
-                    if word[4].strip():
-                        add_highlight_rect(inspection_page, fitz.Rect(word[0], word[1], word[2], word[3]))
-                        highlighted += 1
-                break
+        # Grouper les mots par ligne
+        lines = {}
+        for word in words:
+            mid_y = (word[1] + word[3]) / 2
+            key = round(mid_y / 2) * 2
+            if key not in lines:
+                lines[key] = []
+            lines[key].append(word)
+        
+        logger.info(f"{len(lines)} lignes détectées")
+        
+        # Pour chaque ligne, vérifier si elle correspond à un motif
+        for y_key in sorted(lines.keys()):
+            line_words = sorted(lines[y_key], key=lambda w: w[0])
+            line_text = " ".join(w[4] for w in line_words)
+            
+            for pattern, item_num in target_patterns:
+                if re.search(pattern, line_text, re.IGNORECASE):
+                    logger.debug(f"Item {item_num} trouvé: '{line_text[:60]}...'")
+                    # Surligner tous les mots de la ligne
+                    for word in line_words:
+                        if word[4].strip():
+                            add_highlight_rect(page, fitz.Rect(word[0], word[1], word[2], word[3]))
+                            highlighted += 1
+                    break
     
     logger.info(f"INSPECTION REPORT: {highlighted} surlignages")
     return highlighted
@@ -377,7 +384,7 @@ def process_pdf(source_pdf: Path, output_pdf: Path, cover_terms: list[str]) -> i
         # 2. UL 94
         highlighted += highlight_ul94(document)
 
-        # 3. Tableau INSPECTION REPORT
+        # 3. Tableau INSPECTION REPORT (toutes les pages)
         highlighted += highlight_inspection_report(document)
 
         # 4. Tableau HOLE SIZE
