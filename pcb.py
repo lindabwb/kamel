@@ -536,11 +536,61 @@ def build_standard_rows(pdf_path: Path, standards: str, display_name: Optional[s
 
 
 def evaluate_conformity(spec: str, result: str) -> tuple[str, str]:
+    """
+    Évalue la conformité entre une spécification et un résultat.
+    Gère maintenant:
+    - Règles MIN/MAX avec AVG
+    - Stack up (follow stack up 1/1oz)
+    - Trous bouchés (PLUGGED, NPTH)
+    """
     spec_clean = clean_text(spec)
     result_clean = clean_text(result)
     numeric_spec = re.sub(r"\b[A-Z]+\d+\s*:", "", spec_clean, flags=re.IGNORECASE)
     spec_upper = spec_clean.upper()
     result_upper = result_clean.upper()
+
+    # --- NOUVELLE RÈGLE 1: Règle MIN avec AVG ---
+    # Pour "AVG.0.0010" / "0.00116"
+    if re.search(r"\bAVG\.?\s*[\d.]+\s*\"", spec_clean, re.IGNORECASE) or re.search(r"\bAVG\.?\s*[\d.]+\s*\"", result_clean, re.IGNORECASE):
+        spec_numbers = extract_numbers(spec_clean)
+        result_numbers = extract_numbers(result_clean)
+        if spec_numbers and result_numbers:
+            limit = spec_numbers[0]
+            # Vérifier que toutes les mesures >= limit
+            failing = [value for value in result_numbers if value < limit]
+            if not failing:
+                return "CONFORME", f"Toutes les mesures >= {limit:g} (AVG)"
+            else:
+                return "NON CONFORME", f"Mesure(s) < {limit:g}: {', '.join(f'{value:g}' for value in failing)}"
+        return "A VERIFIER", "AVG: impossible d'extraire les nombres"
+
+    # --- NOUVELLE RÈGLE 2: Stack Up (follow stack up) ---
+    # Pour "follow stack up 1/1oz" / "1/1oz"
+    if "follow stack up" in spec_clean.lower():
+        spec_match = re.search(r"(\d+/\d+oz)", spec_clean)
+        result_match = re.search(r"(\d+/\d+oz)", result_clean)
+        
+        if spec_match and result_match:
+            if spec_match.group(1) == result_match.group(1):
+                return "CONFORME", f"Stack up conforme: {result_match.group(1)}"
+            else:
+                return "NON CONFORME", f"Stack up attendu: {spec_match.group(1)}, mesuré: {result_match.group(1)}"
+        
+        if spec_match and not result_match:
+            return "A VERIFIER", "Stack up: resultat non trouvé"
+        
+        return "A VERIFIER", "Stack up: format non reconnu"
+
+    # --- NOUVELLE RÈGLE 3: Trous bouchés (PLUGGED, NPTH) ---
+    # Pour "0.0098 ± 0.003" / "PLUGGED | PLUGGED | PLUGGED"
+    # Détecter si le résultat contient PLUGGED ou NPTH
+    if "PLUGGED" in result_upper:
+        return "CONFORME", "Trous bouchés (PLUGGED) conformes"
+    
+    if "NPTH" in result_upper and "PLUGGED" not in result_upper:
+        return "CONFORME", "Trou non métallisé (NPTH) conforme"
+
+    # --- RÈGLES EXISTANTES ---
 
     if spec_upper == "NA" and result_upper == "NA":
         return "CONFORME", "Non applicable dans la specification et le resultat"
